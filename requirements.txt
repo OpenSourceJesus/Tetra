@@ -1,0 +1,3 @@
+PyQt5>=5.15
+pyjsparser>=2.7.1
+Js2Py>=0.74; python_version < "3.13"

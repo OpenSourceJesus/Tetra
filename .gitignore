@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+DOM.json
+Lenna.json
+Google.json
+*_assets/
+cache/
+history.json
+bookmarks.json
