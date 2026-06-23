@@ -7,8 +7,9 @@ EXAMPLE_HTML := example.html
 LENNA_HTML ?= lenna.html
 LENNA_URL := https://en.wikipedia.org/wiki/Lenna
 
-.PHONY: help setup install test test-all test-js2qt test-example test-lenna test-google test-render \
-	parse-example parse-lenna parse-lenna-online parse-google run run-example run-lenna run-google clean
+.PHONY: help setup install test test-all test-js2qt test-example test-lenna test-google test-render test-tui \
+	parse-example parse-lenna parse-lenna-online parse-google \
+	run run-example run-lenna run-google run-lenna-tui run-example-tui clean
 
 help:
 	@echo "Offline browser — common targets"
@@ -22,6 +23,8 @@ help:
 	@echo "  make run-example        Open the example page in the Qt viewer"
 	@echo "  make parse-google        Build Google.json from google.com"
 	@echo "  make run-google          Open Google in the Qt viewer (with search bar)"
+	@echo "  make run-lenna-tui       View Lenna article in the terminal"
+	@echo "  make run-example-tui     View example page in the terminal"
 	@echo "  make clean              Remove generated JSON, assets, and caches"
 
 setup: $(VENV)/bin/python
@@ -36,6 +39,7 @@ test: setup test-js2qt parse-example parse-lenna
 	@QT_QPA_PLATFORM=offscreen $(PY) smoke_test.py example lenna
 	@QT_QPA_PLATFORM=offscreen $(PY) smoke_test.py google google-search
 	@QT_QPA_PLATFORM=offscreen $(PY) smoke_test.py render
+	@$(PY) smoke_test.py tui sixel sixel-cache tui-store
 	@echo "All smoke tests passed."
 
 test-all: setup test parse-lenna-online
@@ -80,6 +84,15 @@ run-google: setup
 
 run-lenna: parse-lenna
 	$(PY) json2qt.py Lenna.json
+
+run-lenna-tui: parse-lenna
+	$(PY) json2tui.py --interactive Lenna.json
+
+run-example-tui: parse-example
+	$(PY) json2tui.py --interactive DOM.json
+
+run-google-tui: setup
+	$(PY) json2tui.py --online --interactive
 
 clean:
 	rm -rf __pycache__ .pytest_cache cache
