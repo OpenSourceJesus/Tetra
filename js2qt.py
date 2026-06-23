@@ -8,6 +8,9 @@ from pyjsparser import parse as parse_javascript
 _state = {"alert_used": False}
 
 
+def _is_none_callee(callee_str: str) -> bool:
+    return callee_str == "None" or callee_str.startswith("None.")
+
 def emit_node(node) -> list[str]:
     if node is None:
         return []
@@ -46,6 +49,9 @@ def emit_node(node) -> list[str]:
             return [f"QMessageBox.information(None, 'Alert', str({args}))"]
 
         callee_str = expr_text(callee)
+        if _is_none_callee(callee_str):
+            return []
+
         return [f"{callee_str}({args})"]
 
     if node_type == "AssignmentExpression":
@@ -109,7 +115,10 @@ def expr_text(node) -> str:
     if node_type == "CallExpression":
         callee = node["callee"]
         args = ", ".join(expr_text(arg) for arg in node.get("arguments", []))
-        return f"{expr_text(callee)}({args})"
+        callee_str = expr_text(callee)
+        if _is_none_callee(callee_str):
+            return "None"
+        return f"{callee_str}({args})"
 
     if node_type == "AssignmentExpression":
         return emit_node(node)[0]

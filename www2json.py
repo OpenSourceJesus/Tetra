@@ -112,7 +112,39 @@ def compile_javascript(js_payload: str) -> str:
     if process.returncode != 0:
         print(f"Compilation warning: {process.stderr.strip()}", file=sys.stderr)
         return ""
-    return process.stdout
+    return sanitize_compiled_python(process.stdout)
+
+
+def sanitize_compiled_python(python_src: str) -> str:
+    """Drop untranslatable JS fragments that would fail at runtime."""
+    if not python_src.strip():
+        return ""
+
+    kept: list[str] = []
+    for line in python_src.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"None\s*\(", stripped):
+            continue
+        if re.match(r"None\.[\w.]+\s*\(", stripped):
+            continue
+        if re.search(r"=\s*None\.[\w.]+\s*\(", stripped):
+            continue
+        if re.search(r"=\s*None\s*\(", stripped):
+            continue
+        kept.append(line)
+
+    result = "\n".join(kept)
+    if not result.strip():
+        return ""
+
+    try:
+        compile(result, "<scripts>", "exec")
+    except SyntaxError:
+        return ""
+
+    return result
 
 
 def parse_css_rules(css_text: str) -> list[dict]:
@@ -312,10 +344,16 @@ def serialize_dom(node: dict | None) -> dict | None:
 def extract_scripts(document: dict) -> str:
     compiled_chunks: list[str] = []
     for node in iter_nodes(document):
-        if node.get("type") == "script" and node.get("text", "").strip():
-            compiled = compile_javascript(node["text"])
-            if compiled.strip():
-                compiled_chunks.append(compiled)
+        if node.get("type") != "script":
+            continue
+        if node.get("attributes", {}).get("src"):
+            continue
+        js_payload = node.get("text", "").strip()
+        if not js_payload:
+            continue
+        compiled = compile_javascript(js_payload)
+        if compiled.strip():
+            compiled_chunks.append(compiled)
     return "\n\n".join(compiled_chunks)
 
 

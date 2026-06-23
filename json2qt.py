@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
 )
 
 from navigation import cache_bundle_path, normalize_url, prepare_fetch_url
-from www2json import ingest_to_file
+from www2json import ingest_to_file, sanitize_compiled_python
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 HISTORY_FILE = SCRIPT_DIR / "history.json"
@@ -71,14 +71,23 @@ class JS2PY_RUNTIME:
         if not python_src or not python_src.strip():
             return
 
+        python_src = sanitize_compiled_python(python_src)
+        if not python_src:
+            return
+
+        try:
+            code = compile(python_src, "<page-scripts>", "exec")
+        except SyntaxError:
+            return
+
         namespace: dict = {}
         try:
-            exec(python_src, namespace)
+            exec(code, namespace)
             self.functions.update(
                 {k: v for k, v in namespace.items() if isinstance(v, types.FunctionType)}
             )
-        except Exception as exc:
-            print(f"Runtime execution compilation error: {exc}", file=sys.stderr)
+        except Exception:
+            return
 
 
 def load_json_list(path: Path) -> list:

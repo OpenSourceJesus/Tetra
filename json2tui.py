@@ -27,7 +27,7 @@ from sixel import (
     TEXT_FONT_SIZE,
 )
 from tui_store import cache_bundle_path, record_search, record_visit
-from www2json import ingest_to_file
+from www2json import ingest_to_file, sanitize_compiled_python
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_HOME = "https://www.google.com/?gbv=1"
@@ -108,14 +108,19 @@ class JS2PY_RUNTIME:
         if not python_src or not python_src.strip():
             return
 
+        python_src = sanitize_compiled_python(python_src)
+        if not python_src:
+            return
+
         namespace = {"QMessageBox": TuiMessageBox(self.console)}
         try:
-            exec(python_src, namespace)
+            code = compile(python_src, "<page-scripts>", "exec")
+            exec(code, namespace)
             self.functions.update(
                 {k: v for k, v in namespace.items() if isinstance(v, types.FunctionType)}
             )
-        except Exception as exc:
-            print(f"Runtime execution compilation error: {exc}", file=sys.stderr)
+        except Exception:
+            return
 
 
 def strip_html(fragment: str) -> str:

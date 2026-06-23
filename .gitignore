@@ -8,3 +8,6 @@ Google.json
 cache/
 history.json
 bookmarks.json
+
+# curl/wget saves Google search URLs as path+query filenames
+search?*
