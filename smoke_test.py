@@ -180,6 +180,12 @@ def test_tui_store() -> None:
     assert db["searches"]
 
 
+def test_localhost_js_pipeline() -> None:
+    from testserver.test_js_pipeline import run_tests
+
+    run_tests()
+
+
 def main() -> int:
     tests = {
         "example": test_example_bundle,
@@ -187,6 +193,7 @@ def main() -> int:
         "google": test_google_bundle,
         "google-search": test_google_search_bundle,
         "render": test_render_bundles,
+        "localhost": test_localhost_js_pipeline,
         "tui": test_tui_render,
         "sixel": test_sixel_encode,
         "sixel-cache": test_sixel_cache,

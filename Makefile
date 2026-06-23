@@ -7,9 +7,12 @@ EXAMPLE_HTML := example.html
 LENNA_HTML ?= lenna.html
 LENNA_URL := https://en.wikipedia.org/wiki/Lenna
 
-.PHONY: help setup install test test-all test-js2qt test-example test-lenna test-google test-render test-tui \
-	parse-example parse-lenna parse-lenna-online parse-google \
-	run run-example run-lenna run-google run-lenna-tui run-example-tui clean
+.PHONY: help setup install test test-all test-js2qt test-example test-lenna test-google test-render test-tui test-localhost \
+	parse-example parse-lenna parse-lenna-online parse-google parse-localhost \
+	run run-example run-lenna run-google run-lenna-tui run-example-tui run-localhost serve clean
+
+LOCALHOST_PORT ?= 8765
+LOCALHOST_URL := http://127.0.0.1:$(LOCALHOST_PORT)/pages/basic.html
 
 help:
 	@echo "Offline browser — common targets"
@@ -23,7 +26,10 @@ help:
 	@echo "  make run-example        Open the example page in the Qt viewer"
 	@echo "  make parse-google        Build Google.json from google.com"
 	@echo "  make run-google          Open Google in the Qt viewer (with search bar)"
-	@echo "  make run-lenna-tui       View Lenna article in the terminal"
+	@echo "  make test-localhost     Fetch test pages from local webserver and verify JS translation"
+	@echo "  make serve              Run localhost test webserver (pages under testserver/pages/)"
+	@echo "  make parse-localhost    Build Localhost.json from the running test server"
+	@echo "  make run-localhost      Open basic localhost test page in the Qt viewer"
 	@echo "  make run-example-tui     View example page in the terminal"
 	@echo "  make clean              Remove generated JSON, assets, and caches"
 
@@ -40,6 +46,7 @@ test: setup test-js2qt parse-example parse-lenna
 	@QT_QPA_PLATFORM=offscreen $(PY) smoke_test.py google google-search
 	@QT_QPA_PLATFORM=offscreen $(PY) smoke_test.py render
 	@$(PY) smoke_test.py tui sixel sixel-cache tui-store
+	@$(PY) testserver/test_js_pipeline.py
 	@echo "All smoke tests passed."
 
 test-all: setup test parse-lenna-online
@@ -85,6 +92,19 @@ run-google: setup
 run-lenna: parse-lenna
 	$(PY) json2qt.py Lenna.json
 
+test-localhost: setup
+	$(PY) testserver/test_js_pipeline.py
+
+serve: setup
+	$(PY) testserver/server.py --port $(LOCALHOST_PORT)
+
+parse-localhost: setup
+	@$(PY) -c "import urllib.request; urllib.request.urlopen('$(LOCALHOST_URL)', timeout=2)"
+	$(PY) www2json.py "$(LOCALHOST_URL)" Localhost.json
+
+run-localhost: parse-localhost
+	$(PY) json2qt.py Localhost.json
+
 run-lenna-tui: parse-lenna
 	$(PY) json2tui.py --interactive Lenna.json
 
@@ -96,5 +116,5 @@ run-google-tui: setup
 
 clean:
 	rm -rf __pycache__ .pytest_cache cache
-	rm -f DOM.json Lenna.json Google.json history.json bookmarks.json
-	rm -rf DOM_assets Lenna_assets Google_assets
+	rm -f DOM.json Lenna.json Google.json Localhost.json history.json bookmarks.json
+	rm -rf DOM_assets Lenna_assets Google_assets Localhost_assets

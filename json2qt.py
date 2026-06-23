@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
 )
 
 from navigation import cache_bundle_path, normalize_url, prepare_fetch_url
-from www2json import ingest_to_file, sanitize_compiled_python
+from www2json import ingest_to_file
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 HISTORY_FILE = SCRIPT_DIR / "history.json"
@@ -71,23 +71,14 @@ class JS2PY_RUNTIME:
         if not python_src or not python_src.strip():
             return
 
-        python_src = sanitize_compiled_python(python_src)
-        if not python_src:
-            return
-
-        try:
-            code = compile(python_src, "<page-scripts>", "exec")
-        except SyntaxError:
-            return
-
         namespace: dict = {}
         try:
-            exec(code, namespace)
+            exec(python_src, namespace)
             self.functions.update(
                 {k: v for k, v in namespace.items() if isinstance(v, types.FunctionType)}
             )
-        except Exception:
-            return
+        except Exception as exc:
+            print(f"Runtime execution compilation error: {exc}", file=sys.stderr)
 
 
 def load_json_list(path: Path) -> list:
@@ -135,6 +126,9 @@ class SafeOfflineBrowser(QMainWindow):
         self.runtime = JS2PY_RUNTIME()
         self.form_fields: dict[str, QLineEdit] = {}
         self.active_form: dict | None = None
+        self._back_stack: list[tuple[str, Path]] = []
+        self._forward_stack: list[tuple[str, Path]] = []
+        self._page_loaded = False
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -162,6 +156,14 @@ class SafeOfflineBrowser(QMainWindow):
         bar = QWidget()
         layout = QHBoxLayout(bar)
 
+        self.back_button = QPushButton("Back")
+        self.back_button.clicked.connect(self.go_back)
+        layout.addWidget(self.back_button)
+
+        self.forward_button = QPushButton("Forward")
+        self.forward_button.clicked.connect(self.go_forward)
+        layout.addWidget(self.forward_button)
+
         home_button = QPushButton("Home")
         home_button.clicked.connect(lambda: self.navigate_to(DEFAULT_HOME))
         layout.addWidget(home_button)
@@ -177,7 +179,31 @@ class SafeOfflineBrowser(QMainWindow):
 
         self.status_label = QLabel("")
         layout.addWidget(self.status_label)
+        self._update_nav_buttons()
         return bar
+
+    def _update_nav_buttons(self):
+        self.back_button.setEnabled(bool(self._back_stack))
+        self.forward_button.setEnabled(bool(self._forward_stack))
+
+    def _current_entry(self) -> tuple[str, Path]:
+        return self.source, self.bundle_path
+
+    def go_back(self):
+        if not self._back_stack:
+            return
+        self._forward_stack.append(self._current_entry())
+        source, bundle_path = self._back_stack.pop()
+        self._load_entry(source, bundle_path)
+        self._update_nav_buttons()
+
+    def go_forward(self):
+        if not self._forward_stack:
+            return
+        self._back_stack.append(self._current_entry())
+        source, bundle_path = self._forward_stack.pop()
+        self._load_entry(source, bundle_path)
+        self._update_nav_buttons()
 
     def on_url_submit(self):
         text = self.url_bar.text().strip()
@@ -218,9 +244,33 @@ class SafeOfflineBrowser(QMainWindow):
         window_title = self.page_title or "Offline Browser"
         self.setWindowTitle(f"{window_title} — {self.source}")
         self.status_label.setText("Ready")
+        self._page_loaded = True
+        self._update_nav_buttons()
 
-    def navigate_to(self, target: str):
+    def _load_entry(self, source: str, bundle_path: Path):
+        self.status_label.setText("Loading...")
+        QApplication.processEvents()
+        try:
+            render_bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            self.navigate_to(source, push_history=False)
+            return
+        except json.JSONDecodeError as exc:
+            self.status_label.setText("Error")
+            QMessageBox.critical(
+                self,
+                "Navigation error",
+                f"Cached page is invalid:\n{bundle_path}\n\n{exc}",
+            )
+            return
+        self.load_bundle(render_bundle, bundle_path)
+
+    def navigate_to(self, target: str, push_history: bool = True):
         target = prepare_fetch_url(target)
+        if push_history and self._page_loaded:
+            self._back_stack.append(self._current_entry())
+            self._forward_stack.clear()
+
         self.status_label.setText("Loading...")
         QApplication.processEvents()
 
@@ -229,6 +279,9 @@ class SafeOfflineBrowser(QMainWindow):
             render_bundle = ingest_to_file(target, bundle_path)
         except Exception as exc:
             self.status_label.setText("Error")
+            if push_history and self._back_stack:
+                self._back_stack.pop()
+            self._update_nav_buttons()
             QMessageBox.critical(self, "Navigation error", f"Failed to load:\n{target}\n\n{exc}")
             return
 
