@@ -78,7 +78,7 @@ def test_render_bundles() -> None:
 
 
 def test_google_bundle() -> None:
-    from www2json import ingest
+    from www2json import ingest, is_runnable_script
 
     bundle = ingest("https://www.google.com/?gbv=1")
     dom = bundle["dom"]
@@ -86,6 +86,10 @@ def test_google_bundle() -> None:
     dom_text = json.dumps(dom)
     assert "form" in dom_text
     assert '"name": "q"' in dom_text or '"name":"q"' in dom_text.replace(" ", "")
+
+    scripts = bundle.get("scripts", "")
+    assert not scripts or is_runnable_script(scripts)
+    assert "window." not in scripts
 
 
 def test_google_search_bundle() -> None:
@@ -106,6 +110,27 @@ def test_google_search_bundle() -> None:
     walk(dom)
     assert counts["h3"] >= 3, counts
     assert counts["p"] >= 3, counts
+
+
+def test_youtube_search_bundle() -> None:
+    from www2json import ingest
+
+    bundle = ingest("https://www.youtube.com/results?search_query=cats")
+    assert "YouTube Search" in bundle.get("title", "")
+    dom = bundle["dom"]
+    assert dom is not None
+
+    counts: Counter[str] = Counter()
+
+    def walk(node: dict) -> None:
+        counts[node.get("type", "?")] += 1
+        for child in node.get("children", []):
+            walk(child)
+
+    walk(dom)
+    assert counts["h3"] >= 1, counts
+    assert counts["img"] >= 1, counts
+    assert "search_query" in json.dumps(dom)
 
 
 def test_tui_render() -> None:
@@ -192,6 +217,7 @@ ALL_TESTS = (
     "lenna",
     "google",
     "google-search",
+    "youtube-search",
     "render",
     "tui",
     "sixel",
@@ -206,6 +232,7 @@ def main() -> int:
         "lenna": test_lenna_bundle,
         "google": test_google_bundle,
         "google-search": test_google_search_bundle,
+        "youtube-search": test_youtube_search_bundle,
         "render": test_render_bundles,
         "tui": test_tui_render,
         "sixel": test_sixel_encode,

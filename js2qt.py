@@ -46,11 +46,17 @@ def emit_node(node) -> list[str]:
             return [f"QMessageBox.information(None, 'Alert', str({args}))"]
 
         callee_str = expr_text(callee)
+        if callee_str in {"None", ""} or callee_str.startswith("None."):
+            return []
         return [f"{callee_str}({args})"]
 
     if node_type == "AssignmentExpression":
         left = node["left"]
         right = expr_text(node["right"])
+        left_str = expr_text(left)
+
+        if left_str.startswith(("window.", "document.", "None.", "None")):
+            return []
 
         if (
             left["type"] == "MemberExpression"
@@ -58,9 +64,11 @@ def emit_node(node) -> list[str]:
             and left["property"].get("name") == "style"
         ):
             obj = expr_text(left["object"])
+            if obj in {"None", ""} or obj.startswith("None."):
+                return []
             return [f"{obj}.setStyleSheet({right})"]
 
-        return [f"{expr_text(left)} = {right}"]
+        return [f"{left_str} = {right}"]
 
     if node_type == "BlockStatement":
         lines: list[str] = []

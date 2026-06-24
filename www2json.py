@@ -19,9 +19,9 @@ from html_parse import (
     iter_nodes,
     parse_html,
 )
-from navigation import BROWSER_UA, prepare_fetch_url
+from navigation import BROWSER_UA, is_youtube_search, prepare_fetch_url, youtube_search_query_from_url
 from store import bundle_assets_dir, default_bundle_path
-from search import build_google_search_dom, google_html_has_results
+from search import build_google_search_dom, build_youtube_search_dom, google_html_has_results
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 JS2QT = SCRIPT_DIR / "js2qt.py"
@@ -111,9 +111,23 @@ def compile_javascript(js_payload: str) -> str:
         check=False,
     )
     if process.returncode != 0:
-        print(f"Compilation warning: {process.stderr.strip()}", file=sys.stderr)
         return ""
     return process.stdout
+
+
+def is_runnable_script(python_src: str) -> bool:
+    stripped = python_src.strip()
+    if not stripped or "def " not in stripped:
+        return False
+    unsafe_markers = (
+        "window.",
+        "document.",
+        "None(",
+        "None.",
+        ".call(None)",
+        "navigator.",
+    )
+    return not any(marker in stripped for marker in unsafe_markers)
 
 
 def parse_css_rules(css_text: str) -> list[dict]:
@@ -315,7 +329,7 @@ def extract_scripts(document: dict) -> str:
     for node in iter_nodes(document):
         if node.get("type") == "script" and node.get("text", "").strip():
             compiled = compile_javascript(node["text"])
-            if compiled.strip():
+            if is_runnable_script(compiled):
                 compiled_chunks.append(compiled)
     return "\n\n".join(compiled_chunks)
 
@@ -330,7 +344,11 @@ def ingest(target: str, output_path: Path | None = None) -> dict:
     title = extract_title(document)
     content_root = extract_page_content(document, target)
 
-    if "google.com/search" in target and not google_html_has_results(html_src):
+    if is_youtube_search(target):
+        query = youtube_search_query_from_url(target)
+        serialized_dom = build_youtube_search_dom(target, html_src)
+        title = f"YouTube Search: {query}" if query else "YouTube Search"
+    elif "google.com/search" in target and not google_html_has_results(html_src):
         serialized_dom = build_google_search_dom(target, html_src)
         title = "Google Search"
     else:

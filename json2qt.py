@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from navigation import normalize_url, prepare_fetch_url
+from navigation import google_search_url, normalize_url, prepare_fetch_url, youtube_search_url
 from store import (
     BOOKMARKS_FILE,
     HISTORY_FILE,
@@ -76,6 +76,10 @@ class JS2PY_RUNTIME:
 
     def register_runtime_scripts(self, python_src: str):
         if not python_src or not python_src.strip():
+            return
+        from www2json import is_runnable_script
+
+        if not is_runnable_script(python_src):
             return
 
         namespace: dict = {}
@@ -134,6 +138,7 @@ class SafeOfflineBrowser(QMainWindow):
         self.form_fields: dict[str, QLineEdit | Path] = {}
         self._file_previews: dict[str, QLabel] = {}
         self.active_form: dict | None = None
+        self.primary_form: dict | None = None
         self._back_stack: list[tuple[str, Path]] = []
         self._forward_stack: list[tuple[str, Path]] = []
         self._page_loaded = False
@@ -164,11 +169,14 @@ class SafeOfflineBrowser(QMainWindow):
         bar = QWidget()
         layout = QHBoxLayout(bar)
 
-        self.back_button = QPushButton("Back")
+        nav_button_size = 25
+        self.back_button = QPushButton("<")
+        self.back_button.setFixedSize(nav_button_size, nav_button_size)
         self.back_button.clicked.connect(self.go_back)
         layout.addWidget(self.back_button)
 
-        self.forward_button = QPushButton("Forward")
+        self.forward_button = QPushButton(">")
+        self.forward_button.setFixedSize(nav_button_size, nav_button_size)
         self.forward_button.clicked.connect(self.go_forward)
         layout.addWidget(self.forward_button)
 
@@ -231,6 +239,7 @@ class SafeOfflineBrowser(QMainWindow):
         self.form_fields.clear()
         self._file_previews.clear()
         self.active_form = None
+        self.primary_form = None
         self.runtime = JS2PY_RUNTIME()
 
     def load_bundle(self, render_bundle: dict, bundle_path: Path):
@@ -320,12 +329,33 @@ class SafeOfflineBrowser(QMainWindow):
         absolute = urllib.parse.urljoin(self.source, link)
         self.navigate_to(absolute)
 
-    def submit_form(self, submit_name: str | None = None, submit_value: str | None = None):
-        if self.active_form is None:
+    def build_search_url(self, query: str, input_name: str) -> str:
+        parsed = urllib.parse.urlparse(self.source)
+        host = parsed.netloc.lower()
+        if "youtube.com" in host or input_name == "search_query":
+            return youtube_search_url(query)
+        if input_name == "q" or "google.com" in host:
+            return google_search_url(query)
+        return normalize_url(query)
+
+    def submit_standalone_search(self, field: QLineEdit, input_name: str):
+        query = field.text().strip()
+        if not query:
+            return
+        self.navigate_to(self.build_search_url(query, input_name))
+
+    def submit_form(
+        self,
+        submit_name: str | None = None,
+        submit_value: str | None = None,
+        form: dict | None = None,
+    ):
+        form = form or self.active_form or self.primary_form
+        if form is None:
             return
 
-        action = self.active_form.get("attributes", {}).get("action", "")
-        method = self.active_form.get("attributes", {}).get("method", "get").lower()
+        action = form.get("attributes", {}).get("action", "")
+        method = form.get("attributes", {}).get("method", "get").lower()
         action_url = urllib.parse.urljoin(self.source, action or self.source)
 
         params: dict[str, str] = {}
@@ -336,7 +366,7 @@ class SafeOfflineBrowser(QMainWindow):
         if submit_name:
             params[submit_name] = submit_value if submit_value is not None else submit_name
 
-        if "multipart/form-data" in self.active_form.get("attributes", {}).get("enctype", "").lower():
+        if "multipart/form-data" in form.get("attributes", {}).get("enctype", "").lower():
             self._submit_multipart_form(action_url, submit_name, submit_value)
             return
 
@@ -414,6 +444,7 @@ class SafeOfflineBrowser(QMainWindow):
 
         if node_type == "form":
             previous_form = self.active_form
+            self.primary_form = node
             self.active_form = node
             for child_node in node.get("children", []):
                 self.generate_interface(child_node, active_layout, in_form=True)
@@ -426,10 +457,11 @@ class SafeOfflineBrowser(QMainWindow):
             if input_type == "hidden":
                 return
             if input_type in {"submit", "button"}:
+                form_ref = self.active_form or self.primary_form
                 button = QPushButton(attributes.get("value") or name or "Submit")
                 button.clicked.connect(
-                    lambda _checked=False, submit=name, value=attributes.get("value", ""):
-                    self.submit_form(submit, value)
+                    lambda _checked=False, submit=name, value=attributes.get("value", ""), form=form_ref:
+                    self.submit_form(submit, value, form=form)
                 )
                 active_layout.addWidget(button)
                 return
@@ -438,7 +470,15 @@ class SafeOfflineBrowser(QMainWindow):
                 field.setPlaceholderText(attributes.get("title") or attributes.get("aria-label", "Search"))
                 if name:
                     self.form_fields[name] = field
-                field.returnPressed.connect(lambda: self.submit_form())
+                if in_form and (self.active_form or self.primary_form):
+                    form_ref = self.active_form or self.primary_form
+                    field.returnPressed.connect(
+                        lambda form=form_ref: self.submit_form(form=form)
+                    )
+                else:
+                    field.returnPressed.connect(
+                        lambda fname=name, f=field: self.submit_standalone_search(f, fname)
+                    )
                 active_layout.addWidget(field)
                 return
             if input_type == "file":
@@ -480,7 +520,15 @@ class SafeOfflineBrowser(QMainWindow):
             field = QLineEdit(attributes.get("value", ""))
             if name:
                 self.form_fields[name] = field
-            field.returnPressed.connect(lambda: self.submit_form())
+            if in_form and (self.active_form or self.primary_form):
+                form_ref = self.active_form or self.primary_form
+                field.returnPressed.connect(
+                    lambda form=form_ref: self.submit_form(form=form)
+                )
+            else:
+                field.returnPressed.connect(
+                    lambda fname=name, f=field: self.submit_standalone_search(f, fname)
+                )
             active_layout.addWidget(field)
             return
 

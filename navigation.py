@@ -44,6 +44,10 @@ def google_search_url(query: str) -> str:
     return f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}&gbv=1"
 
 
+def youtube_search_url(query: str) -> str:
+    return "https://www.youtube.com/results?" + urllib.parse.urlencode({"search_query": query})
+
+
 def is_google_home(url: str) -> bool:
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
@@ -61,6 +65,21 @@ def is_google_search(url: str) -> bool:
 def search_query_from_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     return urllib.parse.unquote_plus(urllib.parse.parse_qs(parsed.query).get("q", [""])[0])
+
+
+def is_youtube_search(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if "youtube.com" not in host:
+        return False
+    return parsed.path == "/results" and "search_query" in parsed.query
+
+
+def youtube_search_query_from_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    return urllib.parse.unquote_plus(
+        urllib.parse.parse_qs(parsed.query).get("search_query", [""])[0]
+    )
 
 
 def prepare_fetch_url(url: str) -> str:

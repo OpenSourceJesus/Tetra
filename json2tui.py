@@ -108,6 +108,10 @@ class JS2PY_RUNTIME:
     def register_runtime_scripts(self, python_src: str):
         if not python_src or not python_src.strip():
             return
+        from www2json import is_runnable_script
+
+        if not is_runnable_script(python_src):
+            return
 
         namespace = {"QMessageBox": TuiMessageBox(self.console)}
         try:
@@ -213,6 +217,7 @@ class TerminalBrowser:
         self.images: list[tuple[str, Path]] = []
         self.form_fields: dict[str, str] = {}
         self.active_form: dict | None = None
+        self.primary_form: dict | None = None
         self._section_heading: str | None = None
         self._section_heading_tag: str | None = None
         self._section_body: list[str] = []
@@ -224,6 +229,7 @@ class TerminalBrowser:
         self.images.clear()
         self.form_fields.clear()
         self.active_form = None
+        self.primary_form = None
         self.runtime = JS2PY_RUNTIME(self.console)
         self._reset_section()
 
@@ -359,6 +365,7 @@ class TerminalBrowser:
 
         if node_type == "form":
             previous_form = self.active_form
+            self.primary_form = node
             self.active_form = node
             for child in node.get("children", []):
                 output.extend(self.render_node(child))
@@ -533,11 +540,17 @@ class TerminalBrowser:
         walk_table(node)
         return rows
 
-    def submit_form(self, submit_name: str | None = None, submit_value: str | None = None):
-        if self.active_form is None:
+    def submit_form(
+        self,
+        submit_name: str | None = None,
+        submit_value: str | None = None,
+        form: dict | None = None,
+    ):
+        form = form or self.active_form or self.primary_form
+        if form is None:
             return
 
-        action = self.active_form.get("attributes", {}).get("action", "")
+        action = form.get("attributes", {}).get("action", "")
         action_url = urllib.parse.urljoin(self.source, action or self.source)
         params = dict(self.form_fields)
         if submit_name:
