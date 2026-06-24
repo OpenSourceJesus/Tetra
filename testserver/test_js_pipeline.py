@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import base64
 import socket
 import subprocess
 import sys
@@ -21,11 +20,7 @@ SERVER_SCRIPT = SCRIPT_DIR / "testserver" / "server.py"
 ASSETS_DIR = SCRIPT_DIR / "testserver" / "assets"
 UPLOADS_DIR = TEST_UPLOADS_DIR
 SAMPLE_PNG = ASSETS_DIR / "sample.png"
-
-# 10x10 PNG used for upload/download assertions.
-SAMPLE_PNG_BYTES = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFklEQVR42mNk+M9QzwAEjDAGNgMJDAABKAUEEkdBAAAAAElFTkSuQmCC"
-)
+SAMPLE_SIZE = (32, 32)
 
 JS_CASES = (
     {
@@ -57,8 +52,30 @@ JS_CASES = (
 
 def ensure_sample_asset() -> None:
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-    if not SAMPLE_PNG.exists():
-        SAMPLE_PNG.write_bytes(SAMPLE_PNG_BYTES)
+    try:
+        from PIL import Image
+
+        if SAMPLE_PNG.exists():
+            with Image.open(SAMPLE_PNG) as img:
+                img.load()
+            if img.size == SAMPLE_SIZE and img.mode == "RGB":
+                return
+    except Exception:
+        pass
+
+    from PIL import Image
+
+    image = Image.new("RGB", SAMPLE_SIZE, color=(255, 128, 0))
+    for y in range(SAMPLE_SIZE[1]):
+        for x in range(SAMPLE_SIZE[0]):
+            if (x + y) % 2:
+                image.putpixel((x, y), (0, 100, 200))
+    image.save(SAMPLE_PNG, format="PNG")
+
+
+def sample_png_bytes() -> bytes:
+    ensure_sample_asset()
+    return SAMPLE_PNG.read_bytes()
 
 
 def free_port() -> int:
@@ -184,7 +201,7 @@ def assert_download_image_case(bundle: dict, bundle_dir: Path) -> None:
     assert local_path.exists(), local_path
     data = local_path.read_bytes()
     assert data.startswith(b"\x89PNG\r\n\x1a\n"), "cached file is not a PNG"
-    assert len(data) >= len(SAMPLE_PNG_BYTES), len(data)
+    assert data == sample_png_bytes(), "cached PNG does not match sample asset"
 
 
 def post_multipart_upload(port: int, filename: str, payload: bytes) -> str:
@@ -206,16 +223,17 @@ def post_multipart_upload(port: int, filename: str, payload: bytes) -> str:
 
 
 def assert_upload_endpoint(port: int) -> None:
-    final_url = post_multipart_upload(port, "sample.png", SAMPLE_PNG_BYTES)
+    payload = sample_png_bytes()
+    final_url = post_multipart_upload(port, "sample.png", payload)
     assert "upload-done" in final_url, final_url
 
     uploaded = UPLOADS_DIR / "last.png"
     assert uploaded.exists(), uploaded
-    assert uploaded.read_bytes() == SAMPLE_PNG_BYTES
+    assert uploaded.read_bytes() == payload
 
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/uploads/last.png", timeout=5) as response:
         served = response.read()
-    assert served == SAMPLE_PNG_BYTES
+    assert served == payload
 
 
 def assert_upload_done_page(port: int) -> None:
@@ -231,7 +249,7 @@ def assert_upload_done_page(port: int) -> None:
     assert src and not src.startswith(("http://", "https://", "//")), src
     local_path = (BUNDLES_DIR / src).resolve()
     assert local_path.exists(), local_path
-    assert local_path.read_bytes() == SAMPLE_PNG_BYTES
+    assert local_path.read_bytes() == sample_png_bytes()
 
 
 def run_tests() -> None:

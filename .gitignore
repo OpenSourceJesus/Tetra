@@ -1,6 +1,3 @@
 .venv/
 __pycache__/
 *.pyc
-
-# curl/wget saves Google search URLs as path+query filenames in the repo
-search?*

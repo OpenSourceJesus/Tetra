@@ -156,17 +156,15 @@ def test_sixel_encode() -> None:
 def test_sixel_cache() -> None:
     from sixel import encode_sixel, get_sixel_preview, prepare_preview_image
     from store import sixel_cache_path
+    from testserver.test_js_pipeline import SAMPLE_PNG, ensure_sample_asset
 
-    assets = bundle_assets_dir(bundle_path("Lenna.json"))
-    images = list(assets.glob("*.png"))
-    if not images:
-        return
-    image = images[0]
-    preview = prepare_preview_image(image)
+    ensure_sample_asset()
+    assert SAMPLE_PNG.exists(), SAMPLE_PNG
+    preview = prepare_preview_image(SAMPLE_PNG)
     first = encode_sixel(preview)
-    cache_path = sixel_cache_path(image, 160, 16)
+    cache_path = sixel_cache_path(SAMPLE_PNG, 160, 16)
     cache_path.write_text(first, encoding="utf-8")
-    second, _, _ = get_sixel_preview(image, use_cache=True)
+    second, _, _ = get_sixel_preview(SAMPLE_PNG, use_cache=True)
     assert second == first
     assert len(first) > 100
 
@@ -183,29 +181,23 @@ def test_tui_store() -> None:
     assert db["searches"]
 
 
-def test_localhost_images() -> None:
-    from store import BUNDLES_DIR
-    from testserver.test_js_pipeline import (
-        LocalTestServer,
-        assert_download_image_case,
-        assert_upload_done_page,
-        assert_upload_endpoint,
-        ensure_sample_asset,
-    )
-    from www2json import ingest
-
-    ensure_sample_asset()
-    with LocalTestServer() as port:
-        download_bundle = ingest(f"http://127.0.0.1:{port}/pages/download.html")
-        assert_download_image_case(download_bundle, BUNDLES_DIR)
-        assert_upload_endpoint(port)
-        assert_upload_done_page(port)
-
-
 def test_localhost_js_pipeline() -> None:
     from testserver.test_js_pipeline import run_tests
 
     run_tests()
+
+
+ALL_TESTS = (
+    "example",
+    "lenna",
+    "google",
+    "google-search",
+    "render",
+    "tui",
+    "sixel",
+    "sixel-cache",
+    "tui-store",
+)
 
 
 def main() -> int:
@@ -215,15 +207,18 @@ def main() -> int:
         "google": test_google_bundle,
         "google-search": test_google_search_bundle,
         "render": test_render_bundles,
-        "localhost": test_localhost_js_pipeline,
-        "localhost-images": test_localhost_images,
         "tui": test_tui_render,
         "sixel": test_sixel_encode,
         "sixel-cache": test_sixel_cache,
         "tui-store": test_tui_store,
     }
 
-    selected = sys.argv[1:] or tests.keys()
+    requested = sys.argv[1:]
+    if not requested or requested == ["all"]:
+        selected = ALL_TESTS
+    else:
+        selected = requested
+
     for name in selected:
         if name not in tests:
             print(f"Unknown test: {name}", file=sys.stderr)
