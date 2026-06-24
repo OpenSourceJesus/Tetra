@@ -5,12 +5,15 @@ import json
 import sys
 import types
 import urllib.parse
+import urllib.request
+import uuid
 from pathlib import Path
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,12 +27,16 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from navigation import cache_bundle_path, normalize_url, prepare_fetch_url
+from navigation import normalize_url, prepare_fetch_url
+from store import (
+    BOOKMARKS_FILE,
+    HISTORY_FILE,
+    cache_bundle_path,
+    default_bundle_path,
+)
 from www2json import ingest_to_file
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-HISTORY_FILE = SCRIPT_DIR / "history.json"
-BOOKMARKS_FILE = SCRIPT_DIR / "bookmarks.json"
 DEFAULT_HOME = "https://www.google.com/?gbv=1"
 
 STRUCTURAL_TAGS = frozenset(
@@ -120,11 +127,12 @@ def resolve_asset_path(bundle_path: Path, src: str) -> Path:
 class SafeOfflineBrowser(QMainWindow):
     def __init__(self, render_bundle: dict | None = None, bundle_path: Path | None = None):
         super().__init__()
-        self.bundle_path = bundle_path or SCRIPT_DIR / "DOM.json"
+        self.bundle_path = bundle_path or default_bundle_path()
         self.source = render_bundle.get("source", str(self.bundle_path)) if render_bundle else DEFAULT_HOME
         self.page_title = render_bundle.get("title", "") if render_bundle else ""
         self.runtime = JS2PY_RUNTIME()
-        self.form_fields: dict[str, QLineEdit] = {}
+        self.form_fields: dict[str, QLineEdit | Path] = {}
+        self._file_previews: dict[str, QLabel] = {}
         self.active_form: dict | None = None
         self._back_stack: list[tuple[str, Path]] = []
         self._forward_stack: list[tuple[str, Path]] = []
@@ -221,6 +229,7 @@ class SafeOfflineBrowser(QMainWindow):
             if widget is not None:
                 widget.deleteLater()
         self.form_fields.clear()
+        self._file_previews.clear()
         self.active_form = None
         self.runtime = JS2PY_RUNTIME()
 
@@ -321,10 +330,15 @@ class SafeOfflineBrowser(QMainWindow):
 
         params: dict[str, str] = {}
         for name, field in self.form_fields.items():
-            params[name] = field.text()
+            if isinstance(field, QLineEdit):
+                params[name] = field.text()
 
         if submit_name:
             params[submit_name] = submit_value if submit_value is not None else submit_name
+
+        if "multipart/form-data" in self.active_form.get("attributes", {}).get("enctype", "").lower():
+            self._submit_multipart_form(action_url, submit_name, submit_value)
+            return
 
         if method == "post":
             query = urllib.parse.urlencode(params)
@@ -333,6 +347,66 @@ class SafeOfflineBrowser(QMainWindow):
             target = action_url + ("&" if "?" in action_url else "?") + urllib.parse.urlencode(params)
 
         self.navigate_to(target)
+
+    def _submit_multipart_form(
+        self,
+        action_url: str,
+        submit_name: str | None = None,
+        submit_value: str | None = None,
+    ):
+        boundary = f"----OfflineBrowser{uuid.uuid4().hex}"
+        chunks: list[bytes] = []
+
+        for name, field in self.form_fields.items():
+            if isinstance(field, Path):
+                chunks.extend(
+                    [
+                        f"--{boundary}\r\n".encode(),
+                        (
+                            f'Content-Disposition: form-data; name="{name}"; '
+                            f'filename="{field.name}"\r\n'
+                        ).encode(),
+                        b"Content-Type: application/octet-stream\r\n\r\n",
+                        field.read_bytes(),
+                        b"\r\n",
+                    ]
+                )
+            else:
+                chunks.extend(
+                    [
+                        f"--{boundary}\r\n".encode(),
+                        f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+                        field.text().encode("utf-8"),
+                        b"\r\n",
+                    ]
+                )
+
+        if submit_name:
+            value = submit_value if submit_value is not None else submit_name
+            chunks.extend(
+                [
+                    f"--{boundary}\r\n".encode(),
+                    f'Content-Disposition: form-data; name="{submit_name}"\r\n\r\n'.encode(),
+                    value.encode("utf-8"),
+                    b"\r\n",
+                ]
+            )
+
+        chunks.append(f"--{boundary}--\r\n".encode())
+        body = b"".join(chunks)
+        request = urllib.request.Request(
+            action_url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                final_url = response.geturl()
+        except Exception as exc:
+            QMessageBox.critical(self, "Upload error", str(exc))
+            return
+        self.navigate_to(final_url)
 
     def generate_interface(self, node: dict, active_layout: QVBoxLayout, in_form: bool = False):
         node_type = node.get("type")
@@ -366,6 +440,38 @@ class SafeOfflineBrowser(QMainWindow):
                     self.form_fields[name] = field
                 field.returnPressed.connect(lambda: self.submit_form())
                 active_layout.addWidget(field)
+                return
+            if input_type == "file":
+                row = QWidget()
+                row_layout = QHBoxLayout(row)
+                choose = QPushButton(attributes.get("value") or "Choose file...")
+                preview = QLabel()
+                preview.setAlignment(Qt.AlignLeft)
+
+                def pick_file(field_name=name, preview_label=preview):
+                    path, _ = QFileDialog.getOpenFileName(
+                        self,
+                        "Choose image",
+                        "",
+                        "Images (*.png *.jpg *.jpeg *.gif *.webp)",
+                    )
+                    if not path:
+                        return
+                    file_path = Path(path)
+                    self.form_fields[field_name] = file_path
+                    preview_label.setText(file_path.name)
+                    pixmap = QPixmap(str(file_path))
+                    if not pixmap.isNull():
+                        preview_label.setPixmap(
+                            pixmap.scaledToWidth(160, Qt.SmoothTransformation)
+                        )
+
+                choose.clicked.connect(pick_file)
+                row_layout.addWidget(choose)
+                row_layout.addWidget(preview, stretch=1)
+                active_layout.addWidget(row)
+                if name:
+                    self._file_previews[name] = preview
                 return
             return
 

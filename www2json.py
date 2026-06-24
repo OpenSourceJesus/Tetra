@@ -20,6 +20,7 @@ from html_parse import (
     parse_html,
 )
 from navigation import BROWSER_UA, prepare_fetch_url
+from store import bundle_assets_dir, default_bundle_path
 from search import build_google_search_dom, google_html_has_results
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -321,8 +322,8 @@ def extract_scripts(document: dict) -> str:
 
 def ingest(target: str, output_path: Path | None = None) -> dict:
     if output_path is None:
-        output_path = SCRIPT_DIR / "DOM.json"
-    assets_dir = (output_path.parent / f"{output_path.stem}_assets").resolve()
+        output_path = default_bundle_path()
+    assets_dir = bundle_assets_dir(output_path)
 
     html_src = load_html(target)
     document = parse_html(html_src)
@@ -361,7 +362,7 @@ def main():
         sys.exit(1)
 
     target = sys.argv[1]
-    output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else SCRIPT_DIR / "DOM.json"
+    output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else default_bundle_path()
 
     ingest_to_file(target, output_path)
     print(f"Parsed layout configuration saved successfully to: {output_path}")

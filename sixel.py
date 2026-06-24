@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from tui_store import SIXEL_DIR, ensure_dirs, sixel_cache_path
+from store import SIXEL_DIR, ensure_dirs, sixel_cache_path
 
 ENCODER_VERSION = 4
 DCS_CLOSE = "\x1b\\"

@@ -1,14 +1,9 @@
-"""URL normalization and cache paths for the offline browser."""
+"""URL normalization for the offline browser."""
 
 from __future__ import annotations
 
-import hashlib
 import re
 import urllib.parse
-from pathlib import Path
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-CACHE_DIR = SCRIPT_DIR / "cache"
 
 BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -83,13 +78,3 @@ def prepare_fetch_url(url: str) -> str:
         query = urllib.parse.urlencode(params, doseq=True)
         return urllib.parse.urlunparse(parsed._replace(query=query))
     return url
-
-
-def cache_bundle_path(url: str) -> Path:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
-    return CACHE_DIR / f"{digest}.json"
-
-
-def cache_assets_dir(bundle_path: Path) -> Path:
-    return bundle_path.with_suffix("").with_name(bundle_path.stem + "_assets")

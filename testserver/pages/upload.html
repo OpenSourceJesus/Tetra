@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Upload image test</title>
+  <script>
+  function onPick() {
+    alert('file selected');
+  }
+  </script>
+</head>
+<body>
+  <h1>Upload image test</h1>
+  <form action="/upload" method="post" enctype="multipart/form-data" id="upload-form">
+    <label for="image">Choose an image:</label>
+    <input type="file" name="image" id="image" accept="image/*" onchange="onPick()" />
+    <input type="submit" value="Upload" name="submit" />
+  </form>
+</body>
+</html>

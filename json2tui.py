@@ -26,7 +26,8 @@ from sixel import (
     heading_font_size,
     TEXT_FONT_SIZE,
 )
-from tui_store import cache_bundle_path, record_search, record_visit
+from store import cache_bundle_path, default_bundle_path
+from tui_store import record_search, record_visit
 from www2json import ingest_to_file
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -675,7 +676,7 @@ def main():
     else:
         bundle_path = cache_bundle_path(DEFAULT_HOME)
         if not bundle_path.exists():
-            bundle_path = SCRIPT_DIR / "DOM.json"
+            bundle_path = default_bundle_path()
         if not bundle_path.exists():
             print("Error: no bundle found. Run www2json.py or use --online.", file=sys.stderr)
             sys.exit(1)

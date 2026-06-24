@@ -1,13 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
-DOM.json
-Lenna.json
-Google.json
-*_assets/
-cache/
-history.json
-bookmarks.json
 
-# curl/wget saves Google search URLs as path+query filenames
+# curl/wget saves Google search URLs as path+query filenames in the repo
 search?*

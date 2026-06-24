@@ -12,6 +12,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import QApplication
 
 from json2qt import JS2PY_RUNTIME, SafeOfflineBrowser
+from store import BUNDLES_DIR, bundle_assets_dir, bundle_path
 
 
 def find_first(node: dict, node_type: str) -> dict | None:
@@ -25,7 +26,7 @@ def find_first(node: dict, node_type: str) -> dict | None:
 
 
 def test_example_bundle() -> None:
-    bundle = json.loads(Path("DOM.json").read_text(encoding="utf-8"))
+    bundle = json.loads(bundle_path("DOM.json").read_text(encoding="utf-8"))
     assert bundle["dom"]["type"] == "button", bundle["dom"]
     assert bundle["dom"]["text"] == "hello world"
     assert "def foo" in bundle["scripts"]
@@ -33,7 +34,7 @@ def test_example_bundle() -> None:
 
 
 def test_lenna_bundle() -> None:
-    bundle = json.loads(Path("Lenna.json").read_text(encoding="utf-8"))
+    bundle = json.loads(bundle_path("Lenna.json").read_text(encoding="utf-8"))
     assert bundle.get("title") == "Lenna", bundle.get("title")
 
     counts: Counter[str] = Counter()
@@ -52,25 +53,25 @@ def test_lenna_bundle() -> None:
     assert image is not None, "missing image node"
     src = image.get("attributes", {}).get("src", "")
     if src.startswith(("http://", "https://", "//")):
-        cached_assets = list(Path("Lenna_assets").glob("*"))
+        cached_assets = list(bundle_assets_dir(bundle_path("Lenna.json")).glob("*"))
         assert cached_assets, "image URL retained but no cached assets directory"
     else:
-        assert Path(src).exists(), src
+        assert (BUNDLES_DIR / src).exists(), src
 
 
 def test_render_bundles() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
 
     for bundle_name in ("DOM.json", "Lenna.json"):
-        bundle_path = Path(bundle_name)
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        path = bundle_path(bundle_name)
+        bundle = json.loads(path.read_text(encoding="utf-8"))
 
         runtime = JS2PY_RUNTIME()
         runtime.register_runtime_scripts(bundle.get("scripts", ""))
         if bundle_name == "DOM.json":
             assert "foo" in runtime.functions
 
-        window = SafeOfflineBrowser(bundle, bundle_path)
+        window = SafeOfflineBrowser(bundle, path)
         assert window.base_layout.count() > 0, bundle_name
 
     del app
@@ -111,9 +112,9 @@ def test_tui_render() -> None:
     from json2tui import render_bundle_to_string
 
     for bundle_name in ("DOM.json", "Lenna.json"):
-        bundle_path = Path(bundle_name)
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        output = render_bundle_to_string(bundle, bundle_path)
+        path = bundle_path(bundle_name)
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        output = render_bundle_to_string(bundle, path)
         assert output.strip(), bundle_name
         if bundle_name == "DOM.json":
             assert "hello world" in output.lower()
@@ -127,7 +128,7 @@ def test_tui_render() -> None:
 def test_sixel_encode() -> None:
     from PIL import Image
 
-    from sixel import encode_sixel, get_text_sixel
+    from sixel import PROFILES, encode_sixel, get_text_sixel
 
     image = Image.new("P", (12, 12))
     image.putpalette([0, 0, 0, 255, 255, 255] + [0] * 750)
@@ -135,7 +136,6 @@ def test_sixel_encode() -> None:
     for y in range(12):
         for x in range(12):
             pixels[x, y] = (x + y) % 2
-    from sixel import PROFILES
 
     encoded = encode_sixel(image, profile=PROFILES["konsole"])
     assert encoded.startswith("\x1bPq")
@@ -155,22 +155,25 @@ def test_sixel_encode() -> None:
 
 def test_sixel_cache() -> None:
     from sixel import encode_sixel, get_sixel_preview, prepare_preview_image
-    from tui_store import sixel_cache_path
+    from store import sixel_cache_path
 
-    image = Path("Lenna_assets/f1a7f59bee7ac204.png")
-    if not image.exists():
+    assets = bundle_assets_dir(bundle_path("Lenna.json"))
+    images = list(assets.glob("*.png"))
+    if not images:
         return
+    image = images[0]
     preview = prepare_preview_image(image)
     first = encode_sixel(preview)
     cache_path = sixel_cache_path(image, 160, 16)
     cache_path.write_text(first, encoding="utf-8")
-    second, w2, h2 = get_sixel_preview(image, use_cache=True)
+    second, _, _ = get_sixel_preview(image, use_cache=True)
     assert second == first
     assert len(first) > 100
 
 
 def test_tui_store() -> None:
-    from tui_store import cache_bundle_path, load_db, record_search, record_visit
+    from store import cache_bundle_path
+    from tui_store import load_db, record_search, record_visit
 
     bundle = cache_bundle_path("https://example.com/test-page")
     record_visit("https://example.com/test-page", bundle, viewer="tui")
@@ -178,6 +181,25 @@ def test_tui_store() -> None:
     db = load_db()
     assert db["history"]
     assert db["searches"]
+
+
+def test_localhost_images() -> None:
+    from store import BUNDLES_DIR
+    from testserver.test_js_pipeline import (
+        LocalTestServer,
+        assert_download_image_case,
+        assert_upload_done_page,
+        assert_upload_endpoint,
+        ensure_sample_asset,
+    )
+    from www2json import ingest
+
+    ensure_sample_asset()
+    with LocalTestServer() as port:
+        download_bundle = ingest(f"http://127.0.0.1:{port}/pages/download.html")
+        assert_download_image_case(download_bundle, BUNDLES_DIR)
+        assert_upload_endpoint(port)
+        assert_upload_done_page(port)
 
 
 def test_localhost_js_pipeline() -> None:
@@ -194,6 +216,7 @@ def main() -> int:
         "google-search": test_google_search_bundle,
         "render": test_render_bundles,
         "localhost": test_localhost_js_pipeline,
+        "localhost-images": test_localhost_images,
         "tui": test_tui_render,
         "sixel": test_sixel_encode,
         "sixel-cache": test_sixel_cache,
