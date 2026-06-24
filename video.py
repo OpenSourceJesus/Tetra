@@ -110,7 +110,24 @@ def _is_stream_url(target: str | Path) -> bool:
     return target.startswith(("http://", "https://"))
 
 
-def launch_vlc(target: str | Path) -> subprocess.Popen:
+def get_ready_cached_video(video_id: str) -> Path | None:
+    """Return the cached file path when the video is ready to play locally."""
+    output_path = video_cache_path(video_id, "mp4")
+    if not output_path.exists():
+        return None
+    try:
+        verify_playable_mp4(output_path)
+    except MP4PlayabilityError:
+        return None
+    return output_path
+
+
+def launch_vlc(
+    target: str | Path,
+    *,
+    new_instance: bool = True,
+    title: str | None = None,
+) -> subprocess.Popen:
     """Open VLC on a local file or stream URL."""
     vlc = find_vlc_executable()
     if vlc is None:
@@ -125,8 +142,17 @@ def launch_vlc(target: str | Path) -> subprocess.Popen:
         verify_playable_mp4(path)
         media = str(path.resolve())
 
+    command = [vlc]
+    if new_instance:
+        command.append("--no-one-instance")
+    if title:
+        command.extend([f"--meta-title={title}", f"--video-title={title}"])
+    elif _is_stream_url(target):
+        command.append("--no-video-title-show")
+    command.append(media)
+
     return subprocess.Popen(
-        [vlc, media],
+        command,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -241,21 +267,24 @@ def cache_youtube_video_background(video_id: str, page_url: str | None = None) -
     threading.Thread(target=worker, daemon=True).start()
 
 
-def open_youtube_in_vlc(video_id: str, page_url: str | None = None) -> tuple[subprocess.Popen, str]:
+def open_youtube_in_vlc(
+    video_id: str,
+    page_url: str | None = None,
+    *,
+    new_instance: bool = True,
+    title: str | None = None,
+) -> tuple[subprocess.Popen, str]:
     """Open VLC immediately from cache or stream; cache in the background when streaming."""
     ensure_dirs()
-    output_path = video_cache_path(video_id, "mp4")
     watch_url = page_url or youtube_watch_url(video_id)
 
-    if output_path.exists():
-        try:
-            verify_playable_mp4(output_path)
-            return launch_vlc(output_path), "cache"
-        except MP4PlayabilityError:
-            output_path.unlink(missing_ok=True)
+    cached = get_ready_cached_video(video_id)
+    if cached is not None:
+        return launch_vlc(cached, new_instance=new_instance, title=title), "cache"
 
     stream = extract_youtube_stream(watch_url)
-    process = launch_vlc(stream["url"])
+    stream_title = title or stream.get("title") or None
+    process = launch_vlc(stream["url"], new_instance=new_instance, title=stream_title)
     cache_youtube_video_background(video_id, page_url)
     return process, "stream"
 

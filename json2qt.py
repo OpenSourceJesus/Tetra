@@ -10,7 +10,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -43,7 +43,7 @@ from store import (
     default_bundle_path,
 )
 from www2json import ingest_to_file
-from video import VideoDownloadError, open_youtube_in_vlc
+from video import VideoDownloadError, get_ready_cached_video, launch_vlc, open_youtube_in_vlc
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_HOME = "https://www.google.com/?gbv=1"
@@ -138,8 +138,11 @@ def resolve_asset_path(bundle_path: Path, src: str) -> Path:
 
 
 class SafeOfflineBrowser(QMainWindow):
+    _playback_finished = pyqtSignal(str, object)
+
     def __init__(self, render_bundle: dict | None = None, bundle_path: Path | None = None):
         super().__init__()
+        self._playback_finished.connect(self._on_video_playback_finished)
         self.bundle_path = bundle_path or default_bundle_path()
         self.source = render_bundle.get("source", str(self.bundle_path)) if render_bundle else DEFAULT_HOME
         self.page_title = render_bundle.get("title", "") if render_bundle else ""
@@ -200,7 +203,7 @@ class SafeOfflineBrowser(QMainWindow):
         self.url_bar.returnPressed.connect(self.on_url_submit)
         layout.addWidget(self.url_bar, stretch=1)
 
-        go_button = QPushButton("Go")
+        go_button = QPushButton("Search")
         go_button.clicked.connect(self.on_url_submit)
         layout.addWidget(go_button)
 
@@ -282,7 +285,20 @@ class SafeOfflineBrowser(QMainWindow):
 
     def play_youtube_video(self, video_id: str | None = None):
         video_id = video_id or youtube_video_id_from_url(self.source)
-        if not video_id or self._video_download_active:
+        if not video_id:
+            return
+
+        cached = get_ready_cached_video(video_id)
+        if cached is not None:
+            try:
+                launch_vlc(cached, new_instance=True, title=self.page_title or None)
+                self.status_label.setText("Playing cached video in VLC")
+            except Exception as exc:
+                self.status_label.setText("Video error")
+                QMessageBox.critical(self, "Video playback", str(exc))
+            return
+
+        if self._video_download_active:
             return
 
         self._video_download_active = True
@@ -294,14 +310,19 @@ class SafeOfflineBrowser(QMainWindow):
             error: Exception | None = None
             mode = ""
             try:
-                _, mode = open_youtube_in_vlc(video_id, page_url)
+                _, mode = open_youtube_in_vlc(
+                    video_id,
+                    page_url,
+                    new_instance=True,
+                    title=self.page_title or None,
+                )
             except Exception as exc:
                 error = exc
-            QTimer.singleShot(0, lambda: self._on_video_playback_finished(mode, error))
+            self._playback_finished.emit(mode, error)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_video_playback_finished(self, mode: str, error: Exception | None):
+    def _on_video_playback_finished(self, mode: str, error: object):
         self._video_download_active = False
         if error is not None:
             self.status_label.setText("Video error")

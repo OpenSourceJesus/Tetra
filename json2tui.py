@@ -35,7 +35,7 @@ from sixel import (
 from store import cache_bundle_path, default_bundle_path
 from tui_store import record_search, record_visit
 from www2json import ingest_to_file
-from video import VideoDownloadError, open_youtube_in_vlc
+from video import get_ready_cached_video, launch_vlc, open_youtube_in_vlc
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_HOME = "https://www.google.com/?gbv=1"
@@ -318,12 +318,25 @@ class TerminalBrowser:
         video_id = video_id or youtube_video_id_from_url(self.source)
         if not video_id:
             return
+
+        cached = get_ready_cached_video(video_id)
+        if cached is not None:
+            try:
+                launch_vlc(cached, new_instance=True, title=self.page_title or None)
+                self.console.print("[green]Playing cached video in VLC[/]")
+            except Exception as exc:
+                self.console.print(f"[red]Video error:[/] {exc}")
+            return
+
         self.console.print(f"[dim]Opening {video_id} in VLC...[/]")
         try:
-            _, mode = open_youtube_in_vlc(video_id, self.source)
-            if mode == "cache":
-                self.console.print("[green]Playing cached video in VLC[/]")
-            else:
+            _, mode = open_youtube_in_vlc(
+                video_id,
+                self.source,
+                new_instance=True,
+                title=self.page_title or None,
+            )
+            if mode == "stream":
                 self.console.print("[green]Streaming in VLC[/] [dim](caching in background)[/]")
         except Exception as exc:
             self.console.print(f"[red]Video error:[/] {exc}")

@@ -177,6 +177,34 @@ def test_mp4_playability() -> None:
         pass
 
 
+def test_launch_vlc_command() -> None:
+    from unittest.mock import patch
+
+    from video import launch_vlc
+
+    with patch("video.find_vlc_executable", return_value="/usr/bin/vlc"), patch(
+        "video.subprocess.Popen"
+    ) as popen, patch("video.verify_playable_mp4"):
+        launch_vlc("/tmp/offline-browser/videos/test.mp4")
+        args = popen.call_args[0][0]
+        assert args[0] == "/usr/bin/vlc"
+        assert args[1] == "--no-one-instance"
+        assert args[2].endswith("test.mp4")
+
+        popen.reset_mock()
+        launch_vlc("https://example.com/videoplayback?foo=1", title="My Video")
+        args = popen.call_args[0][0]
+        assert args[1] == "--no-one-instance"
+        assert args[2] == "--meta-title=My Video"
+        assert args[3] == "--video-title=My Video"
+        assert args[4].startswith("https://")
+
+        popen.reset_mock()
+        launch_vlc("https://example.com/videoplayback?foo=1")
+        args = popen.call_args[0][0]
+        assert args[2] == "--no-video-title-show"
+
+
 def test_youtube_stream_url() -> None:
     from navigation import youtube_watch_url
     from video import extract_youtube_stream
@@ -283,6 +311,7 @@ ALL_TESTS = (
     "google-search",
     "youtube-search",
     "youtube-watch",
+    "launch-vlc",
     "youtube-stream",
     "mp4-playability",
     "youtube-video-cache",
@@ -302,6 +331,7 @@ def main() -> int:
         "google-search": test_google_search_bundle,
         "youtube-search": test_youtube_search_bundle,
         "youtube-watch": test_youtube_watch_bundle,
+        "launch-vlc": test_launch_vlc_command,
         "youtube-stream": test_youtube_stream_url,
         "mp4-playability": test_mp4_playability,
         "youtube-video-cache": test_youtube_video_cache,
