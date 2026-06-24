@@ -82,6 +82,27 @@ def youtube_search_query_from_url(url: str) -> str:
     )
 
 
+def is_youtube_watch(url: str) -> bool:
+    return youtube_video_id_from_url(url) is not None
+
+
+def youtube_video_id_from_url(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if "youtube.com" not in host and host not in {"youtu.be", "www.youtu.be"}:
+        return None
+    if parsed.path == "/watch":
+        video_id = urllib.parse.parse_qs(parsed.query).get("v", [""])[0]
+        return video_id or None
+    if host.endswith("youtu.be") and parsed.path.strip("/"):
+        return parsed.path.strip("/").split("/")[0] or None
+    return None
+
+
+def youtube_watch_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def prepare_fetch_url(url: str) -> str:
     """Adjust known sites for HTML-friendly variants."""
     if is_google_home(url):

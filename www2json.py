@@ -19,9 +19,20 @@ from html_parse import (
     iter_nodes,
     parse_html,
 )
-from navigation import BROWSER_UA, is_youtube_search, prepare_fetch_url, youtube_search_query_from_url
+from navigation import (
+    BROWSER_UA,
+    is_youtube_search,
+    is_youtube_watch,
+    prepare_fetch_url,
+    youtube_search_query_from_url,
+)
 from store import bundle_assets_dir, default_bundle_path
-from search import build_google_search_dom, build_youtube_search_dom, google_html_has_results
+from search import (
+    build_google_search_dom,
+    build_youtube_search_dom,
+    build_youtube_watch_dom,
+    google_html_has_results,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 JS2QT = SCRIPT_DIR / "js2qt.py"
@@ -348,6 +359,18 @@ def ingest(target: str, output_path: Path | None = None) -> dict:
         query = youtube_search_query_from_url(target)
         serialized_dom = build_youtube_search_dom(target, html_src)
         title = f"YouTube Search: {query}" if query else "YouTube Search"
+    elif is_youtube_watch(target):
+        serialized_dom = build_youtube_watch_dom(target, html_src)
+        video_id = serialized_dom.get("attributes", {}).get("data-video-id", "")
+        page_title = next(
+            (
+                child.get("text", "")
+                for child in serialized_dom.get("children", [])
+                if child.get("type") == "h1"
+            ),
+            "",
+        )
+        title = page_title or (f"YouTube Video {video_id}" if video_id else "YouTube")
     elif "google.com/search" in target and not google_html_has_results(html_src):
         serialized_dom = build_google_search_dom(target, html_src)
         title = "Google Search"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 TMP_ROOT = Path("/tmp/offline-browser")
@@ -10,6 +11,7 @@ CACHE_DIR = TMP_ROOT / "cache"
 BUNDLES_DIR = TMP_ROOT / "bundles"
 ASSETS_DIR = TMP_ROOT / "assets"
 SIXEL_DIR = TMP_ROOT / "sixel"
+VIDEOS_DIR = TMP_ROOT / "videos"
 TEST_UPLOADS_DIR = TMP_ROOT / "testserver" / "uploads"
 HISTORY_FILE = TMP_ROOT / "history.json"
 BOOKMARKS_FILE = TMP_ROOT / "bookmarks.json"
@@ -23,6 +25,7 @@ def ensure_dirs() -> None:
         BUNDLES_DIR,
         ASSETS_DIR,
         SIXEL_DIR,
+        VIDEOS_DIR,
         TEST_UPLOADS_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)
@@ -55,3 +58,9 @@ def sixel_cache_path(image_path: Path, max_width: int, colors: int, profile: str
         f"v4:{profile}:{image_path.resolve()}:{image_path.stat().st_mtime}:{max_width}:{colors}".encode()
     ).hexdigest()[:24]
     return SIXEL_DIR / f"{digest}.sixel"
+
+
+def video_cache_path(video_id: str, ext: str = "mp4") -> Path:
+    ensure_dirs()
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "", video_id)
+    return VIDEOS_DIR / f"{safe_id}.{ext}"

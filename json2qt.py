@@ -3,13 +3,14 @@
 
 import json
 import sys
+import threading
 import types
 import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -27,7 +28,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from navigation import google_search_url, normalize_url, prepare_fetch_url, youtube_search_url
+from navigation import (
+    google_search_url,
+    is_youtube_watch,
+    normalize_url,
+    prepare_fetch_url,
+    youtube_search_url,
+    youtube_video_id_from_url,
+)
 from store import (
     BOOKMARKS_FILE,
     HISTORY_FILE,
@@ -35,6 +43,7 @@ from store import (
     default_bundle_path,
 )
 from www2json import ingest_to_file
+from video import VideoDownloadError, open_youtube_in_vlc
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_HOME = "https://www.google.com/?gbv=1"
@@ -142,6 +151,7 @@ class SafeOfflineBrowser(QMainWindow):
         self._back_stack: list[tuple[str, Path]] = []
         self._forward_stack: list[tuple[str, Path]] = []
         self._page_loaded = False
+        self._video_download_active = False
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -180,7 +190,8 @@ class SafeOfflineBrowser(QMainWindow):
         self.forward_button.clicked.connect(self.go_forward)
         layout.addWidget(self.forward_button)
 
-        home_button = QPushButton("Home")
+        home_button = QPushButton("🏠")
+        home_button.setFixedSize(nav_button_size, nav_button_size)
         home_button.clicked.connect(lambda: self.navigate_to(DEFAULT_HOME))
         layout.addWidget(home_button)
 
@@ -240,6 +251,7 @@ class SafeOfflineBrowser(QMainWindow):
         self._file_previews.clear()
         self.active_form = None
         self.primary_form = None
+        self._video_download_active = False
         self.runtime = JS2PY_RUNTIME()
 
     def load_bundle(self, render_bundle: dict, bundle_path: Path):
@@ -264,6 +276,44 @@ class SafeOfflineBrowser(QMainWindow):
         self.status_label.setText("Ready")
         self._page_loaded = True
         self._update_nav_buttons()
+
+        if is_youtube_watch(self.source):
+            self.play_youtube_video()
+
+    def play_youtube_video(self, video_id: str | None = None):
+        video_id = video_id or youtube_video_id_from_url(self.source)
+        if not video_id or self._video_download_active:
+            return
+
+        self._video_download_active = True
+        self.status_label.setText("Opening in VLC…")
+        QApplication.processEvents()
+        page_url = self.source
+
+        def worker():
+            error: Exception | None = None
+            mode = ""
+            try:
+                _, mode = open_youtube_in_vlc(video_id, page_url)
+            except Exception as exc:
+                error = exc
+            QTimer.singleShot(0, lambda: self._on_video_playback_finished(mode, error))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_video_playback_finished(self, mode: str, error: Exception | None):
+        self._video_download_active = False
+        if error is not None:
+            self.status_label.setText("Video error")
+            title = "Video playback"
+            if isinstance(error, VideoDownloadError):
+                title = "Video playback"
+            QMessageBox.critical(self, title, str(error))
+            return
+        if mode == "cache":
+            self.status_label.setText("Playing cached video in VLC")
+        else:
+            self.status_label.setText("Streaming in VLC (caching in background)")
 
     def _load_entry(self, source: str, bundle_path: Path):
         self.status_label.setText("Loading...")
@@ -605,11 +655,17 @@ class SafeOfflineBrowser(QMainWindow):
 
         if node_type == "button":
             allocated_widget = QPushButton(node.get("text", ""))
-            onclick = attributes.get("onclick", "")
-            hook_name = onclick.split("(")[0].strip()
-            callback_target = self.runtime.functions.get(hook_name)
-            if callback_target:
-                allocated_widget.clicked.connect(callback_target)
+            if attributes.get("data-action") == "play-vlc":
+                video_id = attributes.get("data-video-id") or youtube_video_id_from_url(self.source) or ""
+                allocated_widget.clicked.connect(
+                    lambda _checked=False, vid=video_id: self.play_youtube_video(vid)
+                )
+            else:
+                onclick = attributes.get("onclick", "")
+                hook_name = onclick.split("(")[0].strip()
+                callback_target = self.runtime.functions.get(hook_name)
+                if callback_target:
+                    allocated_widget.clicked.connect(callback_target)
 
         elif node_type in HEADING_STYLES:
             allocated_widget = self.make_text_label(node, HEADING_STYLES[node_type])

@@ -9,7 +9,12 @@ import urllib.parse
 import urllib.request
 
 from html_parse import flatten_text, iter_nodes, parse_html
-from navigation import BROWSER_UA, search_query_from_url, youtube_search_query_from_url
+from navigation import (
+    BROWSER_UA,
+    search_query_from_url,
+    youtube_search_query_from_url,
+    youtube_video_id_from_url,
+)
 
 RESULT_LINK_STYLE = "color: #1a0dab; font-size: 18px; text-decoration: none;"
 SNIPPET_STYLE = "color: #4d5156; margin: 2px 0 16px 0;"
@@ -382,3 +387,89 @@ def build_youtube_search_dom(source_url: str, html: str) -> dict:
     if not videos:
         videos = fetch_bing_youtube_results(query)
     return build_youtube_search_results_dom(query, videos)
+
+
+def parse_youtube_watch_metadata(html: str, video_id: str) -> dict[str, str]:
+    import json
+
+    metadata = {
+        "video_id": video_id,
+        "title": "",
+        "author": "",
+        "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+    }
+
+    raw = extract_json_after("var ytInitialPlayerResponse = ", html)
+    if not raw:
+        return metadata
+
+    try:
+        player = json.loads(raw)
+    except json.JSONDecodeError:
+        return metadata
+
+    details = player.get("videoDetails") or {}
+    metadata["title"] = details.get("title", "") or metadata["title"]
+    metadata["author"] = details.get("author", "")
+    thumbs = details.get("thumbnail", {}).get("thumbnails") or []
+    if thumbs:
+        metadata["thumbnail"] = thumbs[-1].get("url", metadata["thumbnail"])
+    return metadata
+
+
+def build_youtube_watch_dom(source_url: str, html_src: str) -> dict:
+    video_id = youtube_video_id_from_url(source_url) or ""
+    meta = parse_youtube_watch_metadata(html_src, video_id)
+    title = meta.get("title") or f"YouTube Video {video_id}"
+    author = meta.get("author", "")
+    thumbnail = meta.get("thumbnail", "")
+
+    children: list[dict] = [
+        {
+            "type": "h1",
+            "attributes": {},
+            "children": [],
+            "text": title,
+            "html": html.escape(title),
+        }
+    ]
+    if author:
+        children.append(
+            {
+                "type": "p",
+                "attributes": {},
+                "children": [],
+                "text": author,
+                "html": f'<span style="{CHANNEL_STYLE}">{html.escape(author)}</span>',
+            }
+        )
+    if thumbnail:
+        children.append(
+            {
+                "type": "img",
+                "attributes": {"src": thumbnail, "alt": title},
+                "children": [],
+            }
+        )
+    children.extend(
+        [
+            {
+                "type": "p",
+                "attributes": {},
+                "children": [],
+                "text": "The video opens in VLC as soon as a stream is ready; it caches in the background.",
+                "html": "The video opens in VLC as soon as a stream is ready; it caches in the background.",
+            },
+            {
+                "type": "button",
+                "attributes": {"data-action": "play-vlc", "data-video-id": video_id},
+                "children": [],
+                "text": "Play in VLC",
+            },
+        ]
+    )
+    return {
+        "type": "div",
+        "attributes": {"class": "youtube-watch", "data-video-id": video_id},
+        "children": children,
+    }

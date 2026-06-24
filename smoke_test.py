@@ -133,6 +133,70 @@ def test_youtube_search_bundle() -> None:
     assert "search_query" in json.dumps(dom)
 
 
+def test_youtube_watch_bundle() -> None:
+    from www2json import ingest
+
+    bundle = ingest("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+    dom_text = json.dumps(bundle["dom"])
+    assert "Play in VLC" in dom_text
+    assert "jNQXAC9IVRw" in dom_text
+    assert bundle.get("title")
+
+
+def test_mp4_playability() -> None:
+    from video import (
+        MP4PlayabilityError,
+        has_mp4_header,
+        has_mp4_index,
+        has_mp4_media_data,
+        verify_playable_mp4,
+    )
+
+    assert not has_mp4_header(b"not a video")
+    assert not has_mp4_index(b"xxxxxxxxx")
+    assert not has_mp4_media_data(b"yyyyyyyyy")
+
+    from store import VIDEOS_DIR
+
+    sample = VIDEOS_DIR / "jNQXAC9IVRw.mp4"
+    if not sample.exists():
+        from video import download_youtube_video
+
+        sample = download_youtube_video("jNQXAC9IVRw")
+
+    data = sample.read_bytes()
+    assert has_mp4_header(data)
+    assert has_mp4_index(data)
+    assert has_mp4_media_data(data)
+    verify_playable_mp4(sample)
+
+    try:
+        verify_playable_mp4(sample.with_name("missing-file.mp4"))
+        raise AssertionError("expected missing file to fail")
+    except MP4PlayabilityError:
+        pass
+
+
+def test_youtube_stream_url() -> None:
+    from navigation import youtube_watch_url
+    from video import extract_youtube_stream
+
+    stream = extract_youtube_stream(youtube_watch_url("jNQXAC9IVRw"))
+    assert stream["url"].startswith("https://")
+    assert stream.get("title")
+
+
+def test_youtube_video_cache() -> None:
+    from store import video_cache_path
+    from video import download_youtube_video, verify_playable_mp4
+
+    first = download_youtube_video("jNQXAC9IVRw")
+    assert first == video_cache_path("jNQXAC9IVRw")
+    verify_playable_mp4(first)
+    second = download_youtube_video("jNQXAC9IVRw")
+    assert second == first
+
+
 def test_tui_render() -> None:
     from json2tui import render_bundle_to_string
 
@@ -218,6 +282,10 @@ ALL_TESTS = (
     "google",
     "google-search",
     "youtube-search",
+    "youtube-watch",
+    "youtube-stream",
+    "mp4-playability",
+    "youtube-video-cache",
     "render",
     "tui",
     "sixel",
@@ -233,6 +301,10 @@ def main() -> int:
         "google": test_google_bundle,
         "google-search": test_google_search_bundle,
         "youtube-search": test_youtube_search_bundle,
+        "youtube-watch": test_youtube_watch_bundle,
+        "youtube-stream": test_youtube_stream_url,
+        "mp4-playability": test_mp4_playability,
+        "youtube-video-cache": test_youtube_video_cache,
         "render": test_render_bundles,
         "tui": test_tui_render,
         "sixel": test_sixel_encode,

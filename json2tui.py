@@ -16,7 +16,13 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Prompt
 
-from navigation import normalize_url, prepare_fetch_url, search_query_from_url
+from navigation import (
+    is_youtube_watch,
+    normalize_url,
+    prepare_fetch_url,
+    search_query_from_url,
+    youtube_video_id_from_url,
+)
 from sixel import (
     TITLE_FONT_SIZE,
     TextSegment,
@@ -29,6 +35,7 @@ from sixel import (
 from store import cache_bundle_path, default_bundle_path
 from tui_store import record_search, record_visit
 from www2json import ingest_to_file
+from video import VideoDownloadError, open_youtube_in_vlc
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_HOME = "https://www.google.com/?gbv=1"
@@ -304,6 +311,22 @@ class TerminalBrowser:
         if "google.com/search" in target:
             record_search(search_query_from_url(target), target)
         self.load_bundle(render_bundle, bundle_path)
+        if is_youtube_watch(target):
+            self.play_youtube_video()
+
+    def play_youtube_video(self, video_id: str | None = None):
+        video_id = video_id or youtube_video_id_from_url(self.source)
+        if not video_id:
+            return
+        self.console.print(f"[dim]Opening {video_id} in VLC...[/]")
+        try:
+            _, mode = open_youtube_in_vlc(video_id, self.source)
+            if mode == "cache":
+                self.console.print("[green]Playing cached video in VLC[/]")
+            else:
+                self.console.print("[green]Streaming in VLC[/] [dim](caching in background)[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Video error:[/] {exc}")
 
     def render_page(self) -> list[SixelBlock | str]:
         pieces: list[SixelBlock | str] = []
@@ -472,10 +495,14 @@ class TerminalBrowser:
 
         if node_type == "button":
             label = node.get("text", "button")
-            onclick = attributes.get("onclick", "")
-            hook_name = onclick.split("(")[0].strip()
-            callback = self.runtime.functions.get(hook_name)
-            self.buttons.append((label, callback))
+            if attributes.get("data-action") == "play-vlc":
+                video_id = attributes.get("data-video-id", "")
+                self.buttons.append((label, ("play-vlc", video_id)))
+            else:
+                onclick = attributes.get("onclick", "")
+                hook_name = onclick.split("(")[0].strip()
+                callback = self.runtime.functions.get(hook_name)
+                self.buttons.append((label, callback))
             self._flush_section(output)
             block = text_block(f"[button] {label}")
             if block:
@@ -566,6 +593,10 @@ class TerminalBrowser:
         if isinstance(action, tuple) and action[0] == "submit":
             _, submit_name, submit_value = action
             self.submit_form(submit_name, submit_value)
+            return True
+        if isinstance(action, tuple) and action[0] == "play-vlc":
+            _, video_id = action
+            self.play_youtube_video(video_id or None)
             return True
         if callable(action):
             self.console.print(f"[dim]Button:[/] {label}")
