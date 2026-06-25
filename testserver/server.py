@@ -15,6 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from store import TEST_UPLOADS_DIR
+from testserver.mock_search import handle_mock_search
 
 ROOT = Path(__file__).resolve().parent
 UPLOADS_DIR = TEST_UPLOADS_DIR
@@ -35,6 +36,19 @@ class TestPageHandler(SimpleHTTPRequestHandler):
             relative = clean[len("/uploads/") :]
             return str((UPLOADS_DIR / relative).resolve())
         return super().translate_path(path)
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        mock = handle_mock_search(parsed.path, parsed.query)
+        if mock is not None:
+            status, content_type, body = mock
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
 
     def do_POST(self):
         if self.path.rstrip("/") == "/upload":
@@ -115,6 +129,7 @@ def main() -> None:
     reset_uploads()
     server = HTTPServer((args.bind, args.port), TestPageHandler)
     server.verbose = not args.quiet
+    print(f"Serving mock search at http://{args.bind}:{args.port}/")
     print(f"Serving test pages at http://{args.bind}:{args.port}/pages/")
     try:
         server.serve_forever()

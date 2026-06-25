@@ -17,6 +17,8 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 from navigation import (
+    default_home_url,
+    enable_mock_search,
     is_youtube_watch,
     normalize_url,
     prepare_fetch_url,
@@ -38,7 +40,7 @@ from www2json import ingest_to_file
 from video import get_ready_cached_video, launch_vlc, open_youtube_in_vlc
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_HOME = "https://www.google.com/?gbv=1"
+DEFAULT_HOME = default_home_url()
 
 STRUCTURAL_TAGS = frozenset(
     {
@@ -113,21 +115,9 @@ class JS2PY_RUNTIME:
         self.functions: dict = {}
 
     def register_runtime_scripts(self, python_src: str):
-        if not python_src or not python_src.strip():
-            return
-        from www2json import is_runnable_script
+        from script_runtime import load_scripts
 
-        if not is_runnable_script(python_src):
-            return
-
-        namespace = {"QMessageBox": TuiMessageBox(self.console)}
-        try:
-            exec(python_src, namespace)
-            self.functions.update(
-                {k: v for k, v in namespace.items() if isinstance(v, types.FunctionType)}
-            )
-        except Exception as exc:
-            print(f"Runtime execution compilation error: {exc}", file=sys.stderr)
+        self.functions.update(load_scripts(python_src, {"QMessageBox": TuiMessageBox(self.console)}))
 
 
 def strip_html(fragment: str) -> str:
@@ -295,12 +285,31 @@ class TerminalBrowser:
         self._section_body = []
 
     def load_bundle(self, render_bundle: dict, bundle_path: Path):
+        from html_parse import extract_page_content, flatten_text_nodes
+        from script_runtime import apply_scripts_to_dom
+
         self.clear_state()
-        self.render_bundle = render_bundle
         self.bundle_path = bundle_path
         self.source = render_bundle.get("source", str(bundle_path))
         self.page_title = render_bundle.get("title", "")
-        self.runtime.register_runtime_scripts(render_bundle.get("scripts", ""))
+
+        document_dom = render_bundle.get("document_dom") or render_bundle.get("dom") or {}
+        mutated_dom, handlers, doc_title = apply_scripts_to_dom(
+            document_dom,
+            render_bundle.get("scripts", ""),
+            {"QMessageBox": TuiMessageBox(self.console), "page_url": self.source},
+        )
+        self.runtime.functions.update(handlers)
+        if doc_title:
+            self.page_title = doc_title
+
+        display_doc = {
+            "type": "#document",
+            "children": [{"type": "html", "children": [mutated_dom]}],
+        }
+        content_root = flatten_text_nodes(extract_page_content(display_doc, self.source))
+        self.render_bundle = dict(render_bundle)
+        self.render_bundle["dom"] = content_root or flatten_text_nodes(mutated_dom)
 
     def navigate_to(self, target: str):
         target = prepare_fetch_url(target)
@@ -308,7 +317,7 @@ class TerminalBrowser:
         bundle_path = cache_bundle_path(target)
         render_bundle = ingest_to_file(target, bundle_path)
         record_visit(target, bundle_path, viewer="tui")
-        if "google.com/search" in target:
+        if "google.com/search" in target or "/search?q=" in target:
             record_search(search_query_from_url(target), target)
         self.load_bundle(render_bundle, bundle_path)
         if is_youtube_watch(target):
@@ -714,6 +723,10 @@ def main():
     if "--online" in args:
         online = True
         args.remove("--online")
+    if "--mock-search" in args:
+        enable_mock_search()
+        online = True
+        args.remove("--mock-search")
     interactive = "--interactive" in args or sys.stdout.isatty()
     if "--interactive" in args:
         args.remove("--interactive")
@@ -724,14 +737,14 @@ def main():
     browser = TerminalBrowser()
 
     if online:
-        browser.navigate_to(DEFAULT_HOME)
+        browser.navigate_to(default_home_url())
     elif args:
         bundle_path = Path(args[0])
         render_bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
         record_visit(render_bundle.get("source", str(bundle_path)), bundle_path, viewer="tui")
         browser.load_bundle(render_bundle, bundle_path)
     else:
-        bundle_path = cache_bundle_path(DEFAULT_HOME)
+        bundle_path = cache_bundle_path(default_home_url())
         if not bundle_path.exists():
             bundle_path = default_bundle_path()
         if not bundle_path.exists():

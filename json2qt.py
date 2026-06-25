@@ -4,7 +4,6 @@
 import json
 import sys
 import threading
-import types
 import urllib.parse
 import urllib.request
 import uuid
@@ -29,6 +28,8 @@ from PyQt5.QtWidgets import (
 )
 
 from navigation import (
+    default_home_url,
+    enable_mock_search,
     google_search_url,
     is_youtube_watch,
     normalize_url,
@@ -46,7 +47,7 @@ from www2json import ingest_to_file
 from video import VideoDownloadError, get_ready_cached_video, launch_vlc, open_youtube_in_vlc
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_HOME = "https://www.google.com/?gbv=1"
+DEFAULT_HOME = default_home_url()
 
 STRUCTURAL_TAGS = frozenset(
     {
@@ -84,21 +85,10 @@ class JS2PY_RUNTIME:
         self.functions: dict = {}
 
     def register_runtime_scripts(self, python_src: str):
-        if not python_src or not python_src.strip():
-            return
-        from www2json import is_runnable_script
+        from PyQt5.QtWidgets import QMessageBox
+        from script_runtime import load_scripts
 
-        if not is_runnable_script(python_src):
-            return
-
-        namespace: dict = {}
-        try:
-            exec(python_src, namespace)
-            self.functions.update(
-                {k: v for k, v in namespace.items() if isinstance(v, types.FunctionType)}
-            )
-        except Exception as exc:
-            print(f"Runtime execution compilation error: {exc}", file=sys.stderr)
+        self.functions.update(load_scripts(python_src, {"QMessageBox": QMessageBox}))
 
 
 def load_json_list(path: Path) -> list:
@@ -144,7 +134,7 @@ class SafeOfflineBrowser(QMainWindow):
         super().__init__()
         self._playback_finished.connect(self._on_video_playback_finished)
         self.bundle_path = bundle_path or default_bundle_path()
-        self.source = render_bundle.get("source", str(self.bundle_path)) if render_bundle else DEFAULT_HOME
+        self.source = render_bundle.get("source", str(self.bundle_path)) if render_bundle else default_home_url()
         self.page_title = render_bundle.get("title", "") if render_bundle else ""
         self.runtime = JS2PY_RUNTIME()
         self.form_fields: dict[str, QLineEdit | Path] = {}
@@ -176,7 +166,7 @@ class SafeOfflineBrowser(QMainWindow):
         if render_bundle is not None:
             self.load_bundle(render_bundle, self.bundle_path)
         else:
-            self.navigate_to(DEFAULT_HOME)
+            self.navigate_to(default_home_url())
 
     def build_toolbar(self) -> QWidget:
         bar = QWidget()
@@ -195,7 +185,7 @@ class SafeOfflineBrowser(QMainWindow):
 
         home_button = QPushButton("🏠")
         home_button.setFixedSize(nav_button_size, nav_button_size)
-        home_button.clicked.connect(lambda: self.navigate_to(DEFAULT_HOME))
+        home_button.clicked.connect(lambda: self.navigate_to(default_home_url()))
         layout.addWidget(home_button)
 
         self.url_bar = QLineEdit()
@@ -258,21 +248,39 @@ class SafeOfflineBrowser(QMainWindow):
         self.runtime = JS2PY_RUNTIME()
 
     def load_bundle(self, render_bundle: dict, bundle_path: Path):
+        from PyQt5.QtWidgets import QMessageBox
+        from html_parse import extract_page_content, flatten_text_nodes
+        from script_runtime import apply_scripts_to_dom
+
         self.clear_content()
         self.bundle_path = bundle_path
         self.source = render_bundle.get("source", str(bundle_path))
         self.page_title = render_bundle.get("title", "")
         self.url_bar.setText(self.source)
-        self.runtime.register_runtime_scripts(render_bundle.get("scripts", ""))
 
-        if self.page_title and "google-home" not in json.dumps(render_bundle.get("dom", {})):
+        document_dom = render_bundle.get("document_dom") or render_bundle.get("dom") or {}
+        mutated_dom, handlers, doc_title = apply_scripts_to_dom(
+            document_dom,
+            render_bundle.get("scripts", ""),
+            {"QMessageBox": QMessageBox, "page_url": self.source},
+        )
+        self.runtime.functions.update(handlers)
+        if doc_title:
+            self.page_title = doc_title
+
+        if self.page_title:
             title_label = QLabel(self.page_title)
             title_label.setStyleSheet(HEADING_STYLES["h1"])
             title_label.setWordWrap(True)
             self.base_layout.addWidget(title_label)
 
-        if render_bundle.get("dom"):
-            self.generate_interface(render_bundle["dom"], self.base_layout)
+        display_doc = {
+            "type": "#document",
+            "children": [{"type": "html", "children": [mutated_dom]}],
+        }
+        content_root = flatten_text_nodes(extract_page_content(display_doc, self.source))
+        if content_root:
+            self.generate_interface(content_root, self.base_layout)
 
         window_title = self.page_title or "Offline Browser"
         self.setWindowTitle(f"{window_title} — {self.source}")
@@ -770,12 +778,20 @@ def main():
     args = sys.argv[1:]
     bookmark = False
     start_online = False
+    use_mock_search = False
     if "--bookmark" in args:
         bookmark = True
         args.remove("--bookmark")
     if "--online" in args:
         start_online = True
         args.remove("--online")
+    if "--mock-search" in args:
+        use_mock_search = True
+        args.remove("--mock-search")
+
+    if use_mock_search:
+        enable_mock_search()
+        start_online = True
 
     app = QApplication(sys.argv)
 

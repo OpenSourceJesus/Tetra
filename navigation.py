@@ -2,15 +2,62 @@
 
 from __future__ import annotations
 
+import os
 import re
 import urllib.parse
 
 BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+DEFAULT_MOCK_SEARCH_PORT = 8765
 
 URL_PATTERN = re.compile(
     r"^(https?://|www\.)[^\s]+$",
     re.IGNORECASE,
 )
+
+
+def mock_search_base() -> str | None:
+    return os.environ.get("OFFLINE_BROWSER_MOCK_SEARCH")
+
+
+def mock_search_home_url(port: int | None = None) -> str:
+    base = mock_search_base()
+    if base:
+        return base.rstrip("/") + "/"
+    port = port or DEFAULT_MOCK_SEARCH_PORT
+    return f"http://127.0.0.1:{port}/"
+
+
+def mock_search_results_url(query: str, port: int | None = None) -> str:
+    base = mock_search_base() or f"http://127.0.0.1:{port or DEFAULT_MOCK_SEARCH_PORT}"
+    return f"{base.rstrip('/')}/search?q={urllib.parse.quote_plus(query)}"
+
+
+def default_home_url() -> str:
+    if mock_search_base():
+        return mock_search_home_url()
+    return "https://www.google.com/?gbv=1"
+
+
+def is_mock_search(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname not in {"127.0.0.1", "localhost"}:
+        return False
+    if parsed.path in {"", "/"}:
+        return True
+    if parsed.path.startswith("/search"):
+        return "q=" in parsed.query
+    return parsed.path.startswith("/result/")
+
+
+def is_mock_search_home(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    return parsed.hostname in {"127.0.0.1", "localhost"} and parsed.path in {"", "/"}
+
+
+def enable_mock_search(port: int | None = None) -> str:
+    base = f"http://127.0.0.1:{port or DEFAULT_MOCK_SEARCH_PORT}"
+    os.environ["OFFLINE_BROWSER_MOCK_SEARCH"] = base
+    return base
 
 
 def is_url(text: str) -> bool:
@@ -37,10 +84,14 @@ def normalize_url(text: str) -> str:
             return "https://" + text
         return text
     query = urllib.parse.quote_plus(text)
+    if mock_search_base():
+        return mock_search_results_url(text)
     return f"https://www.google.com/search?q={query}&gbv=1"
 
 
 def google_search_url(query: str) -> str:
+    if mock_search_base():
+        return mock_search_results_url(query)
     return f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}&gbv=1"
 
 

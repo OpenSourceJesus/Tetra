@@ -15,8 +15,8 @@ GOOGLE_JSON := $(BUNDLE_DIR)/Google.json
 LOCALHOST_JSON := $(BUNDLE_DIR)/Localhost.json
 
 .PHONY: help setup install test test-all test-js2qt test-example test-lenna test-google test-render test-tui test-localhost \
-	parse-example parse-lenna parse-lenna-online parse-google parse-localhost \
-	run run-example run-lenna run-google run-lenna-tui run-example-tui run-localhost serve clean
+	parse-example parse-lenna parse-lenna-online parse-google parse-localhost parse-mock-search \
+	run run-example run-lenna run-google run-lenna-tui run-example-tui run-localhost run-mock-search run-mock-search-viewer serve clean
 
 LOCALHOST_PORT ?= 8765
 LOCALHOST_URL := http://127.0.0.1:$(LOCALHOST_PORT)/pages/basic.html
@@ -34,7 +34,10 @@ help:
 	@echo "  make run-example        Open the example page in the Qt viewer"
 	@echo "  make parse-google       Build Google.json from google.com"
 	@echo "  make run-google         Open Google in the Qt viewer (with search bar)"
-	@echo "  make serve              Run localhost test webserver"
+	@echo "  make serve              Run localhost test webserver (includes mock search)"
+	@echo "  make run-mock-search-viewer  Open Qt viewer against localhost mock search"
+	@echo "  make run-xhr-search         Open Qt viewer on XHR-driven search page"
+	@echo "  make parse-mock-search  Ingest mock search results into a bundle"
 	@echo "  make clean              Remove generated files from $(TMP_ROOT)"
 
 setup: $(VENV)/bin/python
@@ -72,8 +75,31 @@ run-google: setup
 run-lenna: parse-lenna
 	$(PY) json2qt.py $(LENNA_JSON)
 
+MOCK_SEARCH_HOME := http://127.0.0.1:$(LOCALHOST_PORT)/
+MOCK_SEARCH_JSON := $(BUNDLE_DIR)/MockSearch.json
+XHR_SEARCH_JSON := $(BUNDLE_DIR)/XHRSearch.json
+XHR_SEARCH_URL := http://127.0.0.1:$(LOCALHOST_PORT)/pages/xhr-search.html
+
 serve: setup
 	$(PY) testserver/server.py --port $(LOCALHOST_PORT)
+
+run-mock-search-viewer: setup
+	OFFLINE_BROWSER_MOCK_SEARCH=$(MOCK_SEARCH_HOME) $(PY) json2qt.py --mock-search
+
+run-mock-search-tui: setup
+	OFFLINE_BROWSER_MOCK_SEARCH=$(MOCK_SEARCH_HOME) $(PY) json2tui.py --mock-search --interactive
+
+parse-mock-search: setup
+	@$(PY) -c "import urllib.request; urllib.request.urlopen('$(MOCK_SEARCH_HOME)', timeout=2)"
+	$(PY) www2json.py "$(MOCK_SEARCH_HOME)search?q=python" $(MOCK_SEARCH_JSON)
+
+run-mock-search: parse-mock-search
+	OFFLINE_BROWSER_MOCK_SEARCH=$(MOCK_SEARCH_HOME) $(PY) json2qt.py $(MOCK_SEARCH_JSON)
+
+run-xhr-search: setup
+	@$(PY) -c "import urllib.request; urllib.request.urlopen('$(XHR_SEARCH_URL)', timeout=2)"
+	$(PY) www2json.py "$(XHR_SEARCH_URL)" $(XHR_SEARCH_JSON)
+	OFFLINE_BROWSER_MOCK_SEARCH=$(MOCK_SEARCH_HOME) $(PY) json2qt.py $(XHR_SEARCH_JSON)
 
 parse-localhost: setup
 	@$(PY) -c "import urllib.request; urllib.request.urlopen('$(LOCALHOST_URL)', timeout=2)"

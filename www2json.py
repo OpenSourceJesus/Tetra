@@ -4,38 +4,29 @@
 import hashlib
 import json
 import re
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from js2py_translator import translate_script
+from script_runtime import is_translated_script
+
 from html_parse import (
     SKIP_TAGS,
+    clone_document_body,
     extract_page_content,
-    extract_title,
+    find_first,
+    page_title,
     flatten_text,
     inline_html,
     iter_nodes,
     parse_html,
 )
-from navigation import (
-    BROWSER_UA,
-    is_youtube_search,
-    is_youtube_watch,
-    prepare_fetch_url,
-    youtube_search_query_from_url,
-)
+from navigation import BROWSER_UA, prepare_fetch_url
 from store import bundle_assets_dir, default_bundle_path
-from search import (
-    build_google_search_dom,
-    build_youtube_search_dom,
-    build_youtube_watch_dom,
-    google_html_has_results,
-)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-JS2QT = SCRIPT_DIR / "js2qt.py"
 
 TEXT_TAGS = frozenset(
     {
@@ -113,32 +104,18 @@ def load_html(target: str) -> str:
     return Path(fetch_target).read_text(encoding="utf-8")
 
 
-def compile_javascript(js_payload: str) -> str:
-    process = subprocess.run(
-        [sys.executable, str(JS2QT)],
-        input=js_payload,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if process.returncode != 0:
-        return ""
-    return process.stdout
-
-
-def is_runnable_script(python_src: str) -> bool:
-    stripped = python_src.strip()
-    if not stripped or "def " not in stripped:
-        return False
-    unsafe_markers = (
-        "window.",
-        "document.",
-        "None(",
-        "None.",
-        ".call(None)",
-        "navigator.",
-    )
-    return not any(marker in stripped for marker in unsafe_markers)
+def extract_scripts(document: dict) -> str:
+    """Translate every <script> tag to Python with Js2Py. JavaScript is never executed."""
+    compiled_chunks: list[str] = []
+    for node in iter_nodes(document):
+        if node.get("type") == "script":
+            js_source = node.get("text", "").strip()
+            if not js_source:
+                continue
+            translated = translate_script(js_source)
+            if is_translated_script(translated):
+                compiled_chunks.append(translated)
+    return "\n\n".join(compiled_chunks)
 
 
 def parse_css_rules(css_text: str) -> list[dict]:
@@ -335,16 +312,6 @@ def serialize_dom(node: dict | None) -> dict | None:
     return None
 
 
-def extract_scripts(document: dict) -> str:
-    compiled_chunks: list[str] = []
-    for node in iter_nodes(document):
-        if node.get("type") == "script" and node.get("text", "").strip():
-            compiled = compile_javascript(node["text"])
-            if is_runnable_script(compiled):
-                compiled_chunks.append(compiled)
-    return "\n\n".join(compiled_chunks)
-
-
 def ingest(target: str, output_path: Path | None = None) -> dict:
     if output_path is None:
         output_path = default_bundle_path()
@@ -352,41 +319,27 @@ def ingest(target: str, output_path: Path | None = None) -> dict:
 
     html_src = load_html(target)
     document = parse_html(html_src)
-    title = extract_title(document)
+    title = page_title(document, target)
     content_root = extract_page_content(document, target)
+    serialized_dom = serialize_dom(content_root)
+    if serialized_dom is None:
+        serialized_dom = {"type": "div", "attributes": {}, "children": []}
 
-    if is_youtube_search(target):
-        query = youtube_search_query_from_url(target)
-        serialized_dom = build_youtube_search_dom(target, html_src)
-        title = f"YouTube Search: {query}" if query else "YouTube Search"
-    elif is_youtube_watch(target):
-        serialized_dom = build_youtube_watch_dom(target, html_src)
-        video_id = serialized_dom.get("attributes", {}).get("data-video-id", "")
-        page_title = next(
-            (
-                child.get("text", "")
-                for child in serialized_dom.get("children", [])
-                if child.get("type") == "h1"
-            ),
-            "",
-        )
-        title = page_title or (f"YouTube Video {video_id}" if video_id else "YouTube")
-    elif "google.com/search" in target and not google_html_has_results(html_src):
-        serialized_dom = build_google_search_dom(target, html_src)
-        title = "Google Search"
-    else:
-        serialized_dom = serialize_dom(content_root)
-        if serialized_dom is None:
-            serialized_dom = {"type": "div", "attributes": {}, "children": []}
+    body = find_first(document, lambda node: node.get("type") == "body")
+    document_dom = clone_document_body(body)
+    if document_dom is None:
+        document_dom = {"type": "body", "attributes": {}, "children": []}
 
     base_url = target if target.startswith("http") else Path(target).resolve().as_uri()
     bundle_dir = output_path.parent.resolve()
     localize_assets(serialized_dom, base_url, assets_dir, bundle_dir)
+    localize_assets(document_dom, base_url, assets_dir, bundle_dir)
 
     return {
         "source": target,
         "title": title,
         "dom": serialized_dom,
+        "document_dom": document_dom,
         "scripts": extract_scripts(document),
     }
 

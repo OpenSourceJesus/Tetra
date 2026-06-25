@@ -94,6 +94,71 @@ def parse_html(html_source: str) -> dict[str, Any]:
     return parser.document
 
 
+def clone_document_body(node: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Preserve the full body tree for translated script DOM APIs."""
+    if node is None:
+        return None
+
+    node_type = node.get("type")
+    if node_type in SKIP_TAGS:
+        return None
+    if node_type == "#text":
+        text = node.get("text", "")
+        if not text:
+            return None
+        return {"type": "#text", "text": text}
+
+    cloned: dict[str, Any] = {
+        "type": node_type,
+        "attributes": dict(node.get("attributes", {})),
+        "children": [],
+    }
+    if node.get("text"):
+        cloned["text"] = node["text"]
+    for child in node.get("children", []):
+        child_clone = clone_document_body(child)
+        if child_clone is not None:
+            cloned["children"].append(child_clone)
+    return cloned
+
+
+def flatten_text_nodes(node: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Promote ``#text`` children into ``text`` fields for renderers."""
+    if node is None:
+        return None
+
+    node_type = node.get("type")
+    if node_type == "#text":
+        return node
+
+    text_parts: list[str] = []
+    children: list[dict[str, Any]] = []
+    if node.get("text"):
+        text_parts.append(str(node["text"]))
+
+    for child in node.get("children", []):
+        if child.get("type") == "#text":
+            text_parts.append(child.get("text", ""))
+            continue
+        flattened = flatten_text_nodes(child)
+        if flattened is not None:
+            children.append(flattened)
+
+    flattened_node = {
+        "type": node_type,
+        "attributes": dict(node.get("attributes", {})),
+        "children": children,
+    }
+    if node.get("html"):
+        flattened_node["html"] = node["html"]
+    combined = "".join(text_parts)
+    if combined.strip():
+        flattened_node["text"] = combined.strip()
+    elif combined:
+        flattened_node["text"] = combined
+    return flattened_node
+
+
 def find_first(node: dict[str, Any] | None, predicate) -> dict[str, Any] | None:
     if node is None:
         return None
@@ -114,32 +179,9 @@ def find_by_id(node: dict[str, Any], element_id: str) -> dict[str, Any] | None:
     )
 
 
-def extract_google_content(document: dict[str, Any]) -> dict[str, Any] | None:
-    body = find_first(document, lambda n: n.get("type") == "body")
-    if body is None:
-        return None
-
-    search_form = find_first(
-        body,
-        lambda n: n.get("type") == "form"
-        and "/search" in n.get("attributes", {}).get("action", ""),
-    )
-    if search_form is not None:
-        return {
-            "type": "div",
-            "attributes": {"class": "google-home"},
-            "children": [search_form],
-        }
-    return None
-
-
 def extract_page_content(document: dict[str, Any], source_url: str = "") -> dict[str, Any]:
-    """Return the main readable subtree for known sites and generic pages."""
-    if source_url and "google.com" in source_url:
-        google_content = extract_google_content(document)
-        if google_content is not None:
-            return google_content
-
+    """Return the main readable subtree from fetched HTML."""
+    del source_url
     body = find_first(document, lambda n: n.get("type") == "body")
     root = body or document
 
@@ -171,6 +213,48 @@ def extract_title(document: dict[str, Any]) -> str:
         heading = find_first(document, lambda n, t=tag: n.get("type") == t)
         if heading is not None:
             return flatten_text(heading).strip()
+    for node in iter_nodes(document):
+        if node.get("type") != "meta":
+            continue
+        attrs = node.get("attributes", {})
+        for key in ("property", "name"):
+            label = attrs.get(key, "")
+            if label in {"og:title", "twitter:title", "title"}:
+                content = attrs.get("content", "").strip()
+                if content:
+                    return content
+    return ""
+
+
+def page_title(document: dict[str, Any], source_url: str = "") -> str:
+    title = extract_title(document)
+    if title:
+        return title
+    if not source_url:
+        return ""
+
+    import urllib.parse
+
+    from navigation import (
+        is_google_search,
+        is_youtube_search,
+        is_youtube_watch,
+        search_query_from_url,
+        youtube_search_query_from_url,
+    )
+
+    if is_youtube_search(source_url):
+        query = youtube_search_query_from_url(source_url)
+        return f"YouTube Search: {query}" if query else "YouTube Search"
+    if is_youtube_watch(source_url):
+        return "YouTube"
+    if is_google_search(source_url):
+        query = search_query_from_url(source_url)
+        return f"Google Search: {query}" if query else "Google Search"
+
+    parsed = urllib.parse.urlparse(source_url)
+    if parsed.netloc:
+        return parsed.netloc.removeprefix("www.")
     return ""
 
 

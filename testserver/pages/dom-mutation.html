@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DOM mutation test</title>
+</head>
+<body>
+  <h1>Dynamic page</h1>
+  <div id="app"></div>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var el = document.createElement('div');
+      el.textContent = 'Hello from translated JS';
+      document.getElementById('app').appendChild(el);
+      document.title = 'DOM updated';
+    });
+  </script>
+</body>
+</html>

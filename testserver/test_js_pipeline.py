@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import sys
@@ -28,24 +29,33 @@ JS_CASES = (
         "title": "Basic JS Test",
         "functions": ("greet",),
         "button_hooks": ("greet",),
-        "script_markers": ("def greet", "QMessageBox.information", "hello from localhost"),
+        "script_markers": ("PyJsHoisted_greet_", "var.get('alert')", "hello from localhost"),
     },
     {
         "page": "multi.html",
         "title": "Multi handler test",
         "functions": ("hello", "goodbye"),
         "button_hooks": ("hello", "goodbye"),
-        "script_markers": ("def hello", "def goodbye", "QMessageBox.information"),
+        "script_markers": ("PyJsHoisted_hello_", "PyJsHoisted_goodbye_", "var.get('alert')"),
     },
     {
         "page": "upload.html",
         "title": "Upload image test",
         "functions": ("onPick",),
         "button_hooks": (),
-        "script_markers": ("def onPick", "QMessageBox.information", "file selected"),
+        "script_markers": ("PyJsHoisted_onPick_", "var.get('alert')", "file selected"),
         "file_inputs": ("image",),
         "form_action": "/upload",
         "form_enctype": "multipart/form-data",
+    },
+    {
+        "page": "dom-mutation.html",
+        "title": "DOM mutation test",
+        "title_after_scripts": "DOM updated",
+        "functions": (),
+        "button_hooks": (),
+        "script_markers": ("createElement", "appendChild", "Hello from translated JS"),
+        "dom_markers": ("Hello from translated JS",),
     },
 )
 
@@ -165,10 +175,20 @@ def assert_js_case(case: dict, bundle: dict) -> None:
         assert marker in scripts, f"missing script marker: {marker}"
 
     namespace: dict = {}
-    exec(scripts, namespace)
+    from script_runtime import apply_scripts_to_dom
+
+    document_dom = bundle.get("document_dom") or bundle.get("dom")
+    mutated_dom, namespace_handlers, doc_title = apply_scripts_to_dom(document_dom, scripts)
+    namespace.update(namespace_handlers)
+    if case.get("title_after_scripts"):
+        assert doc_title == case["title_after_scripts"], doc_title
     for func_name in case["functions"]:
         assert func_name in namespace, f"missing function: {func_name}"
         assert isinstance(namespace[func_name], types.FunctionType), func_name
+
+    dom_text = json.dumps(mutated_dom)
+    for marker in case.get("dom_markers", ()):
+        assert marker in dom_text, f"missing DOM marker: {marker}"
 
     buttons = find_buttons(bundle["dom"])
     assert len(buttons) == len(case["button_hooks"]), buttons
@@ -252,6 +272,44 @@ def assert_upload_done_page(port: int) -> None:
     assert local_path.read_bytes() == sample_png_bytes()
 
 
+def assert_xhr_search(port: int) -> None:
+    from script_runtime import apply_scripts_to_dom
+    from www2json import ingest
+
+    page_url = f"http://127.0.0.1:{port}/pages/xhr-search.html"
+    bundle = ingest(page_url)
+    scripts = bundle.get("scripts", "")
+    assert "XMLHttpRequest" in scripts
+    assert "callprop('send'" in scripts
+
+    mutated_dom, _, doc_title = apply_scripts_to_dom(
+        bundle.get("document_dom") or bundle["dom"],
+        scripts,
+        {"page_url": page_url},
+    )
+    dom_text = json.dumps(mutated_dom)
+    assert "Python" in dom_text or "python" in dom_text.lower(), dom_text[:500]
+    assert doc_title.lower().startswith("xhr:"), doc_title
+
+
+def assert_mock_search(port: int) -> None:
+    from www2json import ingest
+
+    home = ingest(f"http://127.0.0.1:{port}/")
+    assert home.get("title") == "Mock Search", home.get("title")
+    home_text = json.dumps(home["dom"])
+    assert '"name": "q"' in home_text or '"name":"q"' in home_text.replace(" ", "")
+
+    results = ingest(f"http://127.0.0.1:{port}/search?q=python")
+    assert "Mock Search" in results.get("title", "")
+    results_text = json.dumps(results["dom"])
+    assert "Python" in results_text or "python" in results_text.lower()
+    assert results.get("scripts", "").strip()
+
+    detail = ingest(f"http://127.0.0.1:{port}/result/python-docs")
+    assert "Python documentation" in json.dumps(detail["dom"])
+
+
 def run_tests() -> None:
     ensure_sample_asset()
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -274,6 +332,12 @@ def run_tests() -> None:
 
         assert_upload_done_page(port)
         print("    ok  upload-done.html")
+
+        assert_mock_search(port)
+        print("    ok  mock search")
+
+        assert_xhr_search(port)
+        print("    ok  xhr search")
 
 
 def main() -> int:

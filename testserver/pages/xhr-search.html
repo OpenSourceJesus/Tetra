@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>XHR Search</title>
+</head>
+<body>
+  <h1>XHR Search</h1>
+  <form action="/search" method="get" onsubmit="return false;">
+    <input type="search" name="q" id="q" value="python">
+    <button type="button" id="go" onclick="runSearch()">Search</button>
+  </form>
+  <div id="results"></div>
+  <script>
+    function runSearch() {
+      var q = document.getElementById('q').value;
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/search?q=' + encodeURIComponent(q));
+      xhr.onload = function () {
+        var data = JSON.parse(xhr.responseText);
+        var container = document.getElementById('results');
+        container.innerHTML = '';
+        for (var i = 0; i < data.results.length; i++) {
+          var item = data.results[i];
+          var block = document.createElement('div');
+          block.className = 'g';
+          var heading = document.createElement('h3');
+          var link = document.createElement('a');
+          link.textContent = item.title;
+          link.setAttribute('href', item.url);
+          heading.appendChild(link);
+          block.appendChild(heading);
+          var snippet = document.createElement('p');
+          snippet.textContent = item.snippet;
+          block.appendChild(snippet);
+          container.appendChild(block);
+        }
+        document.title = 'XHR: ' + data.query;
+      };
+      xhr.send();
+    }
+    document.addEventListener('DOMContentLoaded', runSearch);
+  </script>
+</body>
+</html>

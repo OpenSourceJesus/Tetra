@@ -1,6 +1,6 @@
 PyQt5>=5.15
 pyjsparser>=2.7.1
+six>=1.10
 rich>=13.0
 pillow>=10.0
 yt-dlp>=2024.1.1
-Js2Py>=0.74; python_version < "3.13"

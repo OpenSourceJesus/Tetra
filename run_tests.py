@@ -38,17 +38,31 @@ def prepare_bundles() -> None:
 
 
 def test_js2qt_pipe() -> None:
-    result = subprocess.run(
+    bootstrap = subprocess.run(
+        [sys.executable, str(ROOT / "js2qt.py")],
+        input="window.foo = 1;",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if bootstrap.returncode != 0:
+        raise AssertionError(bootstrap.stderr.strip() or "js2qt bootstrap failed")
+    if "var.get('window')" not in bootstrap.stdout:
+        raise AssertionError("js2qt did not translate bootstrap assignment")
+
+    handler = subprocess.run(
         [sys.executable, str(ROOT / "js2qt.py")],
         input="function demo(){alert('ok');}",
         capture_output=True,
         text=True,
         check=False,
     )
-    if result.returncode != 0:
-        raise AssertionError(result.stderr.strip() or "js2qt failed")
-    if "QMessageBox.information" not in result.stdout:
-        raise AssertionError("js2qt did not translate alert()")
+    if handler.returncode != 0:
+        raise AssertionError(handler.stderr.strip() or "js2qt handler failed")
+    if "PyJsHoisted_demo_" not in handler.stdout:
+        raise AssertionError("js2qt did not translate handler function")
+    if "var.get('alert')" not in handler.stdout:
+        raise AssertionError("js2qt did not translate alert() call")
 
 
 def run_smoke_tests() -> int:
