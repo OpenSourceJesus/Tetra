@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MockMail</title>
+</head>
+<body>
+  <main>
+    <h1>MockMail</h1>
+    <p id="status">Sign in to load your inbox.</p>
+
+    <section id="login-view">
+      <h2>Login</h2>
+      <p>Use demo / demo or alice / secret.</p>
+      <label>Username <input id="username" name="username" type="text" value="demo"></label>
+      <br>
+      <label>Password <input id="password" name="password" type="password" value="demo"></label>
+      <br>
+      <button type="button" id="login-btn" onclick="doLogin()">Sign in</button>
+    </section>
+
+    <section id="inbox-view" style="display:none">
+      <h2>Inbox</h2>
+      <p id="inbox-user"></p>
+      <div id="message-list"></div>
+      <button type="button" onclick="doLogout()">Sign out</button>
+    </section>
+
+    <section id="message-view" style="display:none">
+      <h2 id="message-subject"></h2>
+      <p id="message-from"></p>
+      <pre id="message-body"></pre>
+      <button type="button" onclick="showInbox()">Back to inbox</button>
+    </section>
+  </main>
+
+  <script>
+    var sessionToken = '';
+
+    function setStatus(text) {
+      var node = document.getElementById('status');
+      if (node) node.textContent = text;
+    }
+
+    function showLogin() {
+      document.getElementById('login-view').style.display = 'block';
+      document.getElementById('inbox-view').style.display = 'none';
+      document.getElementById('message-view').style.display = 'none';
+      setStatus('Sign in to load your inbox.');
+    }
+
+    function showInboxView() {
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('inbox-view').style.display = 'block';
+      document.getElementById('message-view').style.display = 'none';
+    }
+
+    function showMessageView() {
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('inbox-view').style.display = 'none';
+      document.getElementById('message-view').style.display = 'block';
+    }
+
+    function doLogin() {
+      var user = document.getElementById('username').value;
+      var pass = document.getElementById('password').value;
+      setStatus('Signing in...');
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/mail/login');
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.onload = function () {
+        var data = JSON.parse(xhr.responseText);
+        if (!data.ok) {
+          setStatus(data.error || 'Login failed');
+          return;
+        }
+        sessionToken = data.token;
+        setStatus('Signed in as ' + data.user + '. Loading inbox...');
+        loadInbox();
+      };
+      xhr.onerror = function () {
+        setStatus('Login request failed');
+      };
+      xhr.send('username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass));
+    }
+
+    function loadInbox() {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/mail/inbox?token=' + encodeURIComponent(sessionToken));
+      xhr.onload = function () {
+        var data = JSON.parse(xhr.responseText);
+        if (!data.ok) {
+          setStatus(data.error || 'Inbox failed');
+          showLogin();
+          return;
+        }
+        var list = document.getElementById('message-list');
+        var html = '';
+        for (var i = 0; i < data.messages.length; i++) {
+          var item = data.messages[i];
+          html += '<div class="message-row">';
+          html += '<button type="button" onclick="openMessage(' + item.id + ')">';
+          html += item.subject + ' — ' + item.from;
+          html += '</button>';
+          html += '<p>' + item.preview + '</p>';
+          html += '</div>';
+        }
+        list.innerHTML = html;
+        document.getElementById('inbox-user').textContent = 'Mailbox: ' + data.user;
+        showInboxView();
+        setStatus('Inbox loaded (' + data.messages.length + ' messages).');
+        document.title = 'MockMail — ' + data.user;
+      };
+      xhr.onerror = function () {
+        setStatus('Inbox request failed');
+      };
+      xhr.send();
+    }
+
+    function openMessage(id) {
+      setStatus('Loading message ' + id + '...');
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/mail/message/' + id + '?token=' + encodeURIComponent(sessionToken));
+      xhr.onload = function () {
+        var data = JSON.parse(xhr.responseText);
+        if (!data.ok) {
+          setStatus(data.error || 'Message failed');
+          return;
+        }
+        var message = data.message;
+        document.getElementById('message-subject').textContent = message.subject;
+        document.getElementById('message-from').textContent = 'From: ' + message.from;
+        document.getElementById('message-body').textContent = message.body;
+        showMessageView();
+        setStatus('Viewing message ' + message.id);
+        document.title = 'MockMail — ' + message.subject;
+      };
+      xhr.onerror = function () {
+        setStatus('Message request failed');
+      };
+      xhr.send();
+    }
+
+    function showInbox() {
+      loadInbox();
+    }
+
+    function doLogout() {
+      sessionToken = '';
+      showLogin();
+      document.title = 'MockMail';
+    }
+  </script>
+</body>
+</html>

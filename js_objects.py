@@ -264,6 +264,9 @@ class JsBase:
     def is_truthy(self) -> bool:
         return _truthy(self.value)
 
+    def __bool__(self) -> bool:
+        return self.is_truthy()
+
     def neg(self) -> Js:
         return Js(not self.is_truthy())
 
@@ -583,16 +586,36 @@ class DomElement(JsBase):
             self.node.setdefault("attributes", {})[name] = str(value)
 
 
+def _parse_style(text: str) -> dict[str, str]:
+    props: dict[str, str] = {}
+    for decl in str(text).split(";"):
+        decl = decl.strip()
+        if not decl or ":" not in decl:
+            continue
+        name, value = decl.split(":", 1)
+        props[name.strip().lower()] = value.strip()
+    return props
+
+
+def _serialize_style(props: dict[str, str]) -> str:
+    return "; ".join(f"{name}: {value}" for name, value in props.items())
+
+
 class DomStyle(JsBase):
     def __init__(self, node: dict[str, Any], model: DomModel):
         super().__init__({})
         self.node = node
         self.model = model
 
+    def get(self, key: Any) -> Any:
+        props = _parse_style(self.node.get("attributes", {}).get("style", ""))
+        return Js(props.get(_key(key).strip().lower(), ""))
+
     def put(self, key: Any, val: Any, op: str | None = None) -> Any:
-        style = self.node.setdefault("attributes", {}).setdefault("style", "")
-        decl = f"{_key(key)}: {_unwrap(val)};"
-        self.node["attributes"]["style"] = f"{style}; {decl}".strip("; ")
+        attrs = self.node.setdefault("attributes", {})
+        props = _parse_style(attrs.get("style", ""))
+        props[_key(key).strip().lower()] = _js_str(_unwrap(val))
+        attrs["style"] = _serialize_style(props)
         return _wrap(val)
 
 
@@ -773,6 +796,8 @@ def build_browser_objects(dom_model: DomModel, namespace: dict[str, Any]) -> dic
     from js_xhr import xhr_constructor
 
     page_url = str(namespace.get("page_url", "") or "")
+    xhr_complete = namespace.get("xhr_complete")
+    on_complete = xhr_complete if callable(xhr_complete) else None
     document = DomDocument(dom_model.body, dom_model)
     window = JsBase({})
     window.put("document", document)
@@ -806,7 +831,7 @@ def build_browser_objects(dom_model: DomModel, namespace: dict[str, Any]) -> dic
         "NaN": Js(float("nan")),
         "document": document,
         "window": window,
-        "XMLHttpRequest": xhr_constructor(page_url),
+        "XMLHttpRequest": xhr_constructor(page_url, on_complete),
         "JSON": JsBase({"parse": JsFunction(json_parse), "stringify": JsFunction(json_stringify)}),
         "encodeURIComponent": JsFunction(encode_uri_component),
         "Image": JsFunction(image_factory),

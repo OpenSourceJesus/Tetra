@@ -15,6 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from store import TEST_UPLOADS_DIR
+from testserver.mock_email import handle_mock_email, reset_sessions
 from testserver.mock_search import handle_mock_search
 
 ROOT = Path(__file__).resolve().parent
@@ -39,21 +40,42 @@ class TestPageHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        mock = handle_mock_search(parsed.path, parsed.query)
-        if mock is not None:
-            status, content_type, body = mock
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
+        for handler in (handle_mock_search, handle_mock_email):
+            mock = handler(parsed.path, parsed.query)
+            if mock is not None:
+                status, content_type, body = mock
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
         super().do_GET()
 
     def do_POST(self):
-        if self.path.rstrip("/") == "/upload":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.rstrip("/") == "/upload":
             self.handle_upload()
             return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b""
+
+        mock = handle_mock_email(
+            parsed.path,
+            parsed.query,
+            method="POST",
+            body=body,
+        )
+        if mock is not None:
+            status, content_type, payload = mock
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         self.send_error(404, "POST endpoint not found")
 
     def handle_upload(self):
@@ -127,9 +149,11 @@ def main() -> None:
     args = parser.parse_args()
 
     reset_uploads()
+    reset_sessions()
     server = HTTPServer((args.bind, args.port), TestPageHandler)
     server.verbose = not args.quiet
     print(f"Serving mock search at http://{args.bind}:{args.port}/")
+    print(f"Serving mock mail at http://{args.bind}:{args.port}/pages/mail.html")
     print(f"Serving test pages at http://{args.bind}:{args.port}/pages/")
     try:
         server.serve_forever()

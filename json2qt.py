@@ -544,9 +544,12 @@ class SafeOfflineBrowser(QMainWindow):
                 )
                 active_layout.addWidget(button)
                 return
-            if input_type in {"text", "search", ""}:
+            if input_type in {"text", "search", "password", "email", "tel", "url", "number", ""}:
                 field = QLineEdit(attributes.get("value", ""))
-                field.setPlaceholderText(attributes.get("title") or attributes.get("aria-label", "Search"))
+                if input_type == "password":
+                    field.setEchoMode(QLineEdit.Password)
+                placeholder = attributes.get("placeholder") or attributes.get("title") or attributes.get("aria-label", "")
+                field.setPlaceholderText(placeholder)
                 if name:
                     self.form_fields[name] = field
                 if in_form and (self.active_form or self.primary_form):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable
+from typing import Any, Callable, Callable
 
 from navigation import BROWSER_UA
 
@@ -35,8 +35,9 @@ def _handler(value: Any) -> Callable | None:
 
 
 class JsXMLHttpRequest:
-    def __init__(self, page_url: str = ""):
+    def __init__(self, page_url: str = "", on_complete: Callable[[], None] | None = None):
         self.page_url = page_url
+        self._on_complete = on_complete
         self._method = "GET"
         self._url = ""
         self._async = True
@@ -99,7 +100,7 @@ class JsXMLHttpRequest:
         return Js(None)
 
     def create(self, *_args: Any, **_kwargs: Any) -> JsXMLHttpRequest:
-        return JsXMLHttpRequest(self.page_url)
+        return JsXMLHttpRequest(self.page_url, self._on_complete)
 
     def _set_ready_state(self, state: int) -> None:
         self.ready_state = state
@@ -142,14 +143,22 @@ class JsXMLHttpRequest:
             self._set_ready_state(4)
             if self._onerror:
                 call_value(self._onerror, [])
+        self._notify_complete()
+
+    def _notify_complete(self) -> None:
+        if self._on_complete:
+            try:
+                self._on_complete()
+            except Exception:
+                pass
 
 
 def _wrap_xhr(value: Any) -> Any:
     return value
 
 
-def xhr_constructor(page_url: str) -> JsFunction:
+def xhr_constructor(page_url: str, on_complete: Callable[[], None] | None = None) -> JsFunction:
     def factory(*_args: Any, **_kwargs: Any) -> JsXMLHttpRequest:
-        return JsXMLHttpRequest(page_url)
+        return JsXMLHttpRequest(page_url, on_complete)
 
     return JsFunction(factory)

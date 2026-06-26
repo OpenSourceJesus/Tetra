@@ -292,6 +292,57 @@ def assert_xhr_search(port: int) -> None:
     assert doc_title.lower().startswith("xhr:"), doc_title
 
 
+def assert_xhr_mail(port: int) -> None:
+    import urllib.parse
+
+    from script_runtime import apply_scripts_to_dom
+    from www2json import ingest
+
+    page_url = f"http://127.0.0.1:{port}/pages/mail.html"
+    bundle = ingest(page_url)
+    scripts = bundle.get("scripts", "")
+    assert "XMLHttpRequest" in scripts
+    assert "doLogin" in scripts
+    assert "loadInbox" in scripts
+    assert "openMessage" in scripts
+
+    mutated_dom, _, _ = apply_scripts_to_dom(
+        bundle.get("document_dom") or bundle["dom"],
+        scripts,
+        {"page_url": page_url},
+    )
+    assert "MockMail" in json.dumps(mutated_dom)
+
+    login_body = urllib.parse.urlencode({"username": "demo", "password": "demo"}).encode()
+    login_req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/mail/login",
+        data=login_body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(login_req, timeout=5) as response:
+        login_payload = json.loads(response.read().decode("utf-8"))
+    assert login_payload.get("ok"), login_payload
+    token = login_payload["token"]
+
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{port}/api/mail/inbox?token={urllib.parse.quote(token)}",
+        timeout=5,
+    ) as response:
+        inbox_payload = json.loads(response.read().decode("utf-8"))
+    assert inbox_payload.get("ok"), inbox_payload
+    assert len(inbox_payload.get("messages", [])) >= 1
+
+    message_id = inbox_payload["messages"][0]["id"]
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{port}/api/mail/message/{message_id}?token={urllib.parse.quote(token)}",
+        timeout=5,
+    ) as response:
+        message_payload = json.loads(response.read().decode("utf-8"))
+    assert message_payload.get("ok"), message_payload
+    assert message_payload["message"]["subject"]
+
+
 def assert_mock_search(port: int) -> None:
     from www2json import ingest
 
@@ -338,6 +389,9 @@ def run_tests() -> None:
 
         assert_xhr_search(port)
         print("    ok  xhr search")
+
+        assert_xhr_mail(port)
+        print("    ok  xhr mail")
 
 
 def main() -> int:

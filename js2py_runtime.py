@@ -49,15 +49,32 @@ class VarScope:
             return self._globals_scope.get(key)
         return Js(None)
 
+    def _owning_scope(self, name: str) -> VarScope:
+        """Find the scope where `name` is declared, mirroring JS var semantics.
+
+        Assignments target the nearest enclosing scope that already declares the
+        variable so closures write back to outer variables instead of shadowing
+        them locally. Undeclared names fall back to the global (root) scope.
+        """
+        scope: VarScope | None = self
+        root = self
+        while scope is not None:
+            if name in scope._values:
+                return scope
+            root = scope
+            scope = scope._parent
+        return root
+
     def put(self, name: str, value: Any, op: str | None = None) -> Any:
+        target = self._owning_scope(name)
         if op == "+":
-            current = self._values.get(name, 0)
+            current = target._values.get(name, 0)
             try:
-                self._values[name] = current + value
+                target._values[name] = current + value
             except TypeError:
-                self._values[name] = str(current) + str(value)
+                target._values[name] = str(current) + str(value)
         else:
-            self._values[name] = value
+            target._values[name] = value
         if self._globals_scope is not None and name not in {"window", "document", "this"}:
             self._globals_scope.put(name, value, op)
         return value
@@ -68,8 +85,10 @@ class VarScope:
 
 def Scope(bindings: dict[str, Any], parent: VarScope) -> VarScope:
     scope = VarScope(parent, globals_scope=parent._globals_scope)
-    for key, value in bindings.items():
-        scope.put(key, value)
+    # Function arguments are local declarations, so bind them directly into this
+    # scope rather than through put() (which routes assignments to the declaring
+    # outer scope and would otherwise leak parameters into the global scope).
+    scope._values.update(bindings)
     return scope
 
 

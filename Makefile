@@ -16,7 +16,8 @@ LOCALHOST_JSON := $(BUNDLE_DIR)/Localhost.json
 
 .PHONY: help setup install test test-all test-js2qt test-example test-lenna test-google test-render test-tui test-localhost \
 	parse-example parse-lenna parse-lenna-online parse-google parse-localhost parse-mock-search \
-	run run-example run-lenna run-google run-lenna-tui run-example-tui run-localhost run-mock-search run-mock-search-viewer serve clean
+	run run-example run-lenna run-google run-lenna-tui run-example-tui run-localhost run-mock-search run-mock-search-viewer serve clean \
+	run-browser run-mail
 
 LOCALHOST_PORT ?= 8765
 LOCALHOST_URL := http://127.0.0.1:$(LOCALHOST_PORT)/pages/basic.html
@@ -37,6 +38,8 @@ help:
 	@echo "  make serve              Run localhost test webserver (includes mock search)"
 	@echo "  make run-mock-search-viewer  Open Qt viewer against localhost mock search"
 	@echo "  make run-xhr-search         Open Qt viewer on XHR-driven search page"
+	@echo "  make run-browser            Start combined online browser with mock mail"
+	@echo "  make run-mail               Same as run-browser (mock webmail demo)"
 	@echo "  make parse-mock-search  Ingest mock search results into a bundle"
 	@echo "  make clean              Remove generated files from $(TMP_ROOT)"
 
@@ -100,6 +103,14 @@ run-xhr-search: setup
 	@$(PY) -c "import urllib.request; urllib.request.urlopen('$(XHR_SEARCH_URL)', timeout=2)"
 	$(PY) www2json.py "$(XHR_SEARCH_URL)" $(XHR_SEARCH_JSON)
 	OFFLINE_BROWSER_MOCK_SEARCH=$(MOCK_SEARCH_HOME) $(PY) json2qt.py $(XHR_SEARCH_JSON)
+
+run-browser run-mail: setup
+	QT_QPA_PLATFORM=offscreen $(PY) browser.py --port $(LOCALHOST_PORT)
+
+parse-mail: setup
+	@$(PY) -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$(LOCALHOST_PORT)/pages/mail.html', timeout=2)" || \
+		(echo "Start the test server first: make serve" && exit 1)
+	$(PY) browser.py --no-serve --dump $(BUNDLE_DIR)/Mail.json http://127.0.0.1:$(LOCALHOST_PORT)/pages/mail.html
 
 parse-localhost: setup
 	@$(PY) -c "import urllib.request; urllib.request.urlopen('$(LOCALHOST_URL)', timeout=2)"
